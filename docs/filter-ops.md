@@ -14,8 +14,23 @@ Simple column comparisons. Work in both **population filters** and **step filter
 | `not_starts_with` | Negated prefix | `value` | `op: not_starts_with`, `value: "V7"` |
 | `contains` | Substring match | `value` | `op: contains`, `value: "Acme"` |
 | `contains_any` | Any substring matches | `values` (array) | `op: contains_any`, `values: ["Data Migration", "Goblindor"]` |
+| `is_not_null` | Field is not null | _(none)_ | `op: is_not_null` |
+| `is_null` | Field is null | _(none)_ | `op: is_null` |
 
 All standard ops cast the column to string before comparison, so they work on any column type.
+
+The `is_not_null` and `is_null` ops are unary -- no `value` field needed. They skip the string cast and check null state directly. They combine naturally with other ops via the default `and` join:
+
+```yaml
+filter:
+  - field: name
+    op: is_not_null
+  - field: status
+    op: eq
+    value: "active"
+```
+
+This keeps only rows where name IS NOT NULL **and** status = "active".
 
 ### Adding a new standard op
 

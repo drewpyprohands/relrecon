@@ -101,6 +101,38 @@ def test_apply_filter_contains():
     assert result.height == 2
 
 
+def test_apply_filter_is_not_null_with_and_join():
+    """is_not_null works with default AND join alongside other filters."""
+    df = pl.DataFrame({
+        "name": ["Acme", None, "Beta", None, "Gamma"],
+        "status": ["active", "active", "inactive", "active", "active"],
+    })
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "name", "op": "is_not_null"},
+        {"field": "status", "op": "eq", "value": "active"},
+    ])
+    result = df.filter(expr)
+    assert result.height == 2
+    assert result["name"].to_list() == ["Acme", "Gamma"]
+
+
+def test_apply_filter_is_not_null():
+    """Filter op 'is_not_null' keeps rows where field is not null."""
+    df = pl.DataFrame({"vendor_id": ["V1", None, "V3", None, "V5"]})
+    result = _apply_step_filter(df, {"field": "vendor_id", "op": "is_not_null"})
+    assert result.height == 3
+    assert result["vendor_id"].to_list() == ["V1", "V3", "V5"]
+
+
+def test_apply_filter_is_null():
+    """Filter op 'is_null' keeps rows where field is null."""
+    df = pl.DataFrame({"vendor_id": ["V1", None, "V3", None, "V5"]})
+    result = _apply_step_filter(df, {"field": "vendor_id", "op": "is_null"})
+    assert result.height == 2
+    assert result["vendor_id"].to_list() == [None, None]
+
+
 def test_apply_filter_max_age_years():
     """Filter op 'max_age_years' delegates to apply_date_gate."""
     df = pl.DataFrame({"Updated": ["01/01/2026", "01/01/2020", "06/01/2025"]})

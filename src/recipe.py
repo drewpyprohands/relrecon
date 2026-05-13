@@ -246,6 +246,10 @@ def build_filter_expr(filter_config: list, join_mode: str = "and") -> pl.Expr:
             for v in cond["values"][1:]:
                 sub = sub | col.str.contains(v, literal=True)
             exprs.append(sub)
+        elif op == "is_not_null":
+            exprs.append(pl.col(field).is_not_null())
+        elif op == "is_null":
+            exprs.append(pl.col(field).is_null())
         else:
             raise ValueError(f"Unknown filter op: {op}")
 

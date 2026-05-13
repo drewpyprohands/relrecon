@@ -318,7 +318,9 @@
           "type": "object",
           "description": "Tie-breaker for selecting among duplicate destination matches. Sorts by column value after stripping optional prefix.",
           "additionalProperties": false,
-          "required": ["column"],
+          "required": [
+            "column"
+          ],
           "properties": {
             "column": {
               "type": "string",
@@ -330,7 +332,10 @@
             },
             "order": {
               "type": "string",
-              "enum": ["asc", "desc"],
+              "enum": [
+                "asc",
+                "desc"
+              ],
               "default": "asc",
               "description": "Sort order: 'asc' (lowest wins, default) or 'desc' (highest wins)"
             }
@@ -492,7 +497,9 @@
             "starts_with",
             "not_starts_with",
             "contains",
-            "contains_any"
+            "contains_any",
+            "is_not_null",
+            "is_null"
           ]
         },
         "value": {
@@ -535,7 +542,9 @@
             "not_starts_with",
             "contains",
             "contains_any",
-            "max_age_years"
+            "max_age_years",
+            "is_not_null",
+            "is_null"
           ]
         },
         "value": {

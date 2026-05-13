@@ -1,0 +1,95 @@
+name: Null Filter Example
+description: >
+  Demonstrates is_not_null filter to exclude records with missing names
+  before matching. Without this filter, null-name records enter the
+  matching pipeline and produce false matches.
+
+sources:
+  core_parent:
+    file: core_parent_export.csv
+    type: trusted_reference
+  multi_pop:
+    file: tp_multi_pop_dataset.csv
+    type: multi_population
+
+populations:
+  pop1:
+    source: multi_pop
+    record_key: vendor_id
+    filter:
+      - field: vendor_id
+        op: starts_with
+        value: "V7"
+      - field: l3_fmly_nm
+        op: is_not_null
+
+  # To also filter on l1 names, add another condition:
+  # pop1_strict:
+  #   source: multi_pop
+  #   record_key: vendor_id
+  #   filter:
+  #     - field: vendor_id
+  #       op: starts_with
+  #       value: "V7"
+  #     - field: l3_fmly_nm
+  #       op: is_not_null
+  #     - field: l1_fmly_nm
+  #       op: is_not_null
+
+steps:
+  - name: Match Pop1 to core_parent
+    source: pop1
+    destination: core_parent
+    match_fields:
+      - source: l3_fmly_nm
+        destination: Vendor Name
+        method: exact
+        tiers: [raw, clean]
+    date_gate:
+      field: Updated
+      max_age_years: 2
+      applies_to: destination
+    inherit:
+      - source: Supplier Name
+        as: derived_l1_name
+      - source: Supplier ID
+        as: derived_l1_id
+
+output:
+  format: xlsx
+  path: output/null_filter_example_report.xlsx
+  match_mode: best_match
+  tabs:
+    - name: Matched
+      type: matched_records
+    - name: Analysis
+      type: unmatched_review
+  columns:
+    matched:
+      - field: l3_fmly_nm
+        header: Source L3 Name
+      - field: vendor_id
+        header: Source Vendor ID
+      - field: derived_l1_name
+        header: Derived L1 Name
+      - field: derived_l1_id
+        header: Derived L1 ID
+      - field: match_step
+        header: Match Source
+      - field: match_tier
+        header: Match Tier
+      - field: name_score
+        header: Name Score
+    analysis:
+      - field: l3_fmly_nm
+        header: L3 Name
+      - field: vendor_id
+        header: Vendor ID
+      - field: l1_fmly_nm
+        header: L1 Name
+      - field: reason_code
+        header: Reason Code
+
+normalization:
+  stopwords: config/stopwords.json
+  aliases: config/aliases.json
