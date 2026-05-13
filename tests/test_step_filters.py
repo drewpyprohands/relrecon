@@ -101,6 +101,107 @@ def test_apply_filter_contains():
     assert result.height == 2
 
 
+# ---------------------------------------------------------------------------
+# Tests: ignore_case option
+# ---------------------------------------------------------------------------
+
+
+def test_starts_with_ignore_case():
+    """starts_with with ignore_case matches regardless of casing."""
+    df = pl.DataFrame({"vendor_id": ["VLM111001", "Vlm111002", "vlm111003", "V748001", "ABC999"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "vendor_id", "op": "starts_with", "value": "VLM111", "ignore_case": True},
+    ])
+    result = df.filter(expr)
+    assert result.height == 3
+    assert set(result["vendor_id"].to_list()) == {"VLM111001", "Vlm111002", "vlm111003"}
+
+
+def test_starts_with_case_sensitive_default():
+    """starts_with without ignore_case is case-sensitive (existing behavior)."""
+    df = pl.DataFrame({"vendor_id": ["VLM111001", "Vlm111002", "vlm111003"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "vendor_id", "op": "starts_with", "value": "VLM111"},
+    ])
+    result = df.filter(expr)
+    assert result.height == 1
+    assert result["vendor_id"][0] == "VLM111001"
+
+
+def test_eq_ignore_case():
+    """eq with ignore_case matches regardless of casing."""
+    df = pl.DataFrame({"status": ["Active", "ACTIVE", "active", "inactive"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "status", "op": "eq", "value": "active", "ignore_case": True},
+    ])
+    result = df.filter(expr)
+    assert result.height == 3
+
+
+def test_contains_ignore_case():
+    """contains with ignore_case matches regardless of casing."""
+    df = pl.DataFrame({"name": ["Acme Corp", "ACME LLC", "acme inc", "Beta Co"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "name", "op": "contains", "value": "Acme", "ignore_case": True},
+    ])
+    result = df.filter(expr)
+    assert result.height == 3
+
+
+def test_contains_any_ignore_case():
+    """contains_any with ignore_case matches regardless of casing."""
+    df = pl.DataFrame({"name": ["Acme Corp", "BETA LLC", "gamma inc", "Delta Co"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "name", "op": "contains_any", "values": ["Acme", "Beta"], "ignore_case": True},
+    ])
+    result = df.filter(expr)
+    assert result.height == 2
+
+
+def test_neq_ignore_case():
+    """neq with ignore_case excludes regardless of casing."""
+    df = pl.DataFrame({"status": ["Active", "INACTIVE", "active", "Inactive"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "status", "op": "neq", "value": "inactive", "ignore_case": True},
+    ])
+    result = df.filter(expr)
+    assert result.height == 2  # only the two "active" variants
+
+
+def test_not_starts_with_ignore_case():
+    """not_starts_with with ignore_case excludes regardless of casing."""
+    df = pl.DataFrame({"vendor_id": ["VLM111001", "Vlm111002", "V748001"]})
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "vendor_id", "op": "not_starts_with", "value": "VLM111", "ignore_case": True},
+    ])
+    result = df.filter(expr)
+    assert result.height == 1
+    assert result["vendor_id"][0] == "V748001"
+
+
+def test_ignore_case_with_and_join():
+    """ignore_case works combined with other filters via AND join."""
+    df = pl.DataFrame({
+        "vendor_id": ["VLM111001", "Vlm111002", "vlm111003", "V748001"],
+        "l3_fmly_nm": ["Corp A", None, "Corp C", "Corp D"],
+    })
+    from recipe import build_filter_expr
+    expr = build_filter_expr([
+        {"field": "vendor_id", "op": "starts_with", "value": "VLM111", "ignore_case": True},
+        {"field": "l3_fmly_nm", "op": "is_not_null"},
+    ])
+    result = df.filter(expr)
+    assert result.height == 2
+    assert set(result["vendor_id"].to_list()) == {"VLM111001", "vlm111003"}
+
+
 def test_apply_filter_is_not_null_with_and_join():
     """is_not_null works with default AND join alongside other filters."""
     df = pl.DataFrame({

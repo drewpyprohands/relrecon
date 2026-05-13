@@ -1,8 +1,9 @@
-name: Null Filter Example
+name: Filter Examples
 description: >
   Demonstrates is_not_null filter to exclude records with missing names
-  before matching. Without this filter, null-name records enter the
-  matching pipeline and produce false matches.
+  before matching, and ignore_case for case-insensitive prefix matching.
+  Without the null filter, null-name records enter the matching pipeline
+  and produce false matches.
 
 sources:
   core_parent:
@@ -20,6 +21,18 @@ populations:
       - field: vendor_id
         op: starts_with
         value: "V7"
+      - field: l3_fmly_nm
+        op: is_not_null
+
+  # Case-insensitive prefix match -- catches VLM111, Vlm111, vlm111, etc.
+  vlm_vendors:
+    source: multi_pop
+    record_key: vendor_id
+    filter:
+      - field: vendor_id
+        op: starts_with
+        value: "VLM111"
+        ignore_case: true
       - field: l3_fmly_nm
         op: is_not_null
 

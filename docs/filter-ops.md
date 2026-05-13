@@ -19,7 +19,27 @@ Simple column comparisons. Work in both **population filters** and **step filter
 
 All standard ops cast the column to string before comparison, so they work on any column type.
 
-The `is_not_null` and `is_null` ops are unary -- no `value` field needed. They skip the string cast and check null state directly. They combine naturally with other ops via the default `and` join:
+The `is_not_null` and `is_null` ops are unary -- no `value` field needed. They skip the string cast and check null state directly.
+
+### Case-Insensitive Matching
+
+Any standard op that takes a `value` or `values` field supports `ignore_case: true`. When set, both the column and the comparison value are lowercased before matching.
+
+```yaml
+filter:
+  - field: vendor_id
+    op: starts_with
+    value: "VLM111"
+    ignore_case: true
+```
+
+This matches `VLM111`, `Vlm111`, `vlm111`, `VLm111`, etc. Works with `eq`, `neq`, `starts_with`, `not_starts_with`, `contains` and `contains_any`.
+
+The `is_not_null` and `is_null` ops ignore this flag (case doesn't apply to null checks).
+
+### Combining Filters
+
+All standard ops combine naturally with other ops via the default `and` join:
 
 ```yaml
 filter:
