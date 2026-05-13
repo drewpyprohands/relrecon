@@ -229,21 +229,32 @@ def build_filter_expr(filter_config: list, join_mode: str = "and") -> pl.Expr:
 
         field = cond["field"]
         op = cond["op"]
+        ignore_case = cond.get("ignore_case", False)
         col = pl.col(field).cast(pl.String)
 
+        # When ignore_case is set, lowercase the column for comparison
+        if ignore_case:
+            col = col.str.to_lowercase()
+
         if op == "eq":
-            exprs.append(col == cond["value"])
+            value = cond["value"].lower() if ignore_case else cond["value"]
+            exprs.append(col == value)
         elif op == "neq":
-            exprs.append(col != cond["value"])
+            value = cond["value"].lower() if ignore_case else cond["value"]
+            exprs.append(col != value)
         elif op == "starts_with":
-            exprs.append(col.str.starts_with(cond["value"]))
+            value = cond["value"].lower() if ignore_case else cond["value"]
+            exprs.append(col.str.starts_with(value))
         elif op == "not_starts_with":
-            exprs.append(~col.str.starts_with(cond["value"]))
+            value = cond["value"].lower() if ignore_case else cond["value"]
+            exprs.append(~col.str.starts_with(value))
         elif op == "contains":
-            exprs.append(col.str.contains(cond["value"], literal=True))
+            value = cond["value"].lower() if ignore_case else cond["value"]
+            exprs.append(col.str.contains(value, literal=True))
         elif op == "contains_any":
-            sub = col.str.contains(cond["values"][0], literal=True)
-            for v in cond["values"][1:]:
+            values = [v.lower() for v in cond["values"]] if ignore_case else cond["values"]
+            sub = col.str.contains(values[0], literal=True)
+            for v in values[1:]:
                 sub = sub | col.str.contains(v, literal=True)
             exprs.append(sub)
         elif op == "is_not_null":

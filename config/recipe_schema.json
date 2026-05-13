@@ -518,6 +518,11 @@
             "or"
           ],
           "default": "and"
+        },
+        "ignore_case": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, comparison is case-insensitive (lowercases both column and value)."
         }
       }
     },
@@ -577,6 +582,11 @@
         "max_age_years": {
           "type": "number",
           "description": "Legacy field \u2014 prefer using op: max_age_years with value instead."
+        },
+        "ignore_case": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, comparison is case-insensitive (lowercases both column and value)."
         }
       }
     }
