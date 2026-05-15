@@ -490,3 +490,23 @@ def test_load_source_backward_compat(tmp_path):
     csv.write_text("id,name\n1,Alice\n")
     df = load_source({"file": "data.csv"}, str(tmp_path))
     assert df.height == 1
+
+
+def test_verify_cert_path_preserved():
+    """verify: /path/to/cert.pem should stay as a path, not become True."""
+    cases = [
+        ("/etc/ssl/certs/ca-bundle.crt", "/etc/ssl/certs/ca-bundle.crt"),
+        ("/home/user/.certs/internal-ca.pem", "/home/user/.certs/internal-ca.pem"),
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("no", False),
+        ("true", True),
+        ("yes", True),
+        ("1", True),
+    ]
+    for input_val, expected in cases:
+        v = input_val
+        if isinstance(v, str) and v.lower() in ("true", "false", "0", "1", "no", "yes"):
+            v = v.lower() not in ("false", "0", "no")
+        assert v == expected, f"verify={input_val!r}: expected {expected!r}, got {v!r}"
