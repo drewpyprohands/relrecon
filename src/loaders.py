@@ -239,7 +239,10 @@ def _load_trino(conn_config: dict, query: str) -> pl.DataFrame:
     if conn_config.get("verify") is not None:
         v = conn_config["verify"]
         if isinstance(v, str):
-            v = v.lower() not in ("false", "0", "no")
+            if v.lower() in ("false", "0", "no"):
+                v = False
+            elif v.lower() in ("true", "1", "yes"):
+                v = True
         conn_kwargs["verify"] = v
 
     conn_kwargs = {k: v for k, v in conn_kwargs.items() if v is not None}
