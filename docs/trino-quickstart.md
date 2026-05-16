@@ -66,6 +66,50 @@ docker rm -f trino-test  # auth container from setup.sh
 docker rm -f trino       # plain container
 ```
 
+## SSL: Internal CA Troubleshooting
+
+If your Trino endpoint uses an internal CA and Python throws
+`self-signed certificate in certificate chain`, the CA chain
+needs to be added to your Python cert bundle.
+
+### Extract the cert chain
+
+```bash
+openssl s_client -connect trino.example.com:443 -showcerts </dev/null 2>/dev/null | \
+  awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/{print}' > /tmp/trino-chain.pem
+
+# Verify it captured certs (expect 2-4)
+grep -c 'BEGIN CERTIFICATE' /tmp/trino-chain.pem
+```
+
+### Option A: Append to certifi bundle (quick)
+
+```bash
+cat /tmp/trino-chain.pem >> "$(python3 -c 'import certifi; print(certifi.where())')"
+```
+
+Note: gets overwritten on `pip install --upgrade certifi`.
+
+### Option B: Combined bundle (survives upgrades)
+
+```bash
+cp "$(python3 -c 'import certifi; print(certifi.where())')" ~/combined-ca.pem
+cat /tmp/trino-chain.pem >> ~/combined-ca.pem
+export SSL_CERT_FILE=~/combined-ca.pem
+```
+
+### Verify
+
+```bash
+python3 -c "
+import ssl, socket
+ctx = ssl.create_default_context()
+with ctx.wrap_socket(socket.socket(), server_hostname='trino.example.com') as s:
+    s.connect(('trino.example.com', 443))
+    print('OK:', s.getpeercert()['subject'])
+"
+```
+
 ## Notes
 
 - Password auth requires HTTPS (Trino enforces this)
