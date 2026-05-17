@@ -280,7 +280,7 @@ def generate_mermaid(recipe: dict, stats: dict, matched_df: pl.DataFrame | None 
 
         # Build step label
         if detailed:
-            threshold = mf.get("threshold", 100 if mf.get("method") == "exact" else "?")
+            mf.get("threshold", 100 if mf.get("method") == "exact" else "?")
             addr = step.get("address_support", {})
             addr_thresh = addr.get("threshold", "none")
             addr_part = f"addr >= {addr_thresh}%" if isinstance(addr_thresh, (int, float)) else ""
@@ -321,7 +321,7 @@ def generate_mermaid(recipe: dict, stats: dict, matched_df: pl.DataFrame | None 
 
         # Connect to this step (solid from Pop, dashed cascade from previous step)
         if i == 0:
-            lines.append(f"    Pop --> S1")
+            lines.append("    Pop --> S1")
 
         # Matched output
         if count > 0:
@@ -353,7 +353,7 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
         timing: Optional pipeline timing dict
         recipe_file: Optional recipe filename for header metadata
     """
-    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     bold = Font(bold=True, size=12)
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")

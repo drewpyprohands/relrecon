@@ -19,7 +19,7 @@ from typing import Optional
 
 from rapidfuzz import fuzz as rfuzz
 
-from normalize import clean, normalized, apply_tier
+from normalize import apply_tier
 
 # ---------------------------------------------------------------------------
 # libpostal availability check

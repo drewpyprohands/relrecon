@@ -47,9 +47,45 @@
             "type": "string",
             "enum": [
               "file",
-              "sql"
+              "sql",
+              "http"
             ],
             "description": "Loader type (default: file)"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to download (required for http loader). Supports ${VAR} env interpolation."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "tsv",
+              "parquet",
+              "json",
+              "jsonl",
+              "zip"
+            ],
+            "description": "File format (auto-detected from URL if omitted)"
+          },
+          "zip_entry": {
+            "type": "string",
+            "description": "Specific file to extract from a ZIP archive. If omitted, uses single file or largest."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "HTTP headers to send with the request"
+          },
+          "verify": {
+            "description": "SSL verification: true, false, or path to CA cert bundle"
+          },
+          "timeout": {
+            "type": "number",
+            "default": 300,
+            "description": "HTTP request timeout in seconds (default: 300)"
           },
           "driver": {
             "type": "string",
@@ -74,6 +110,33 @@
             "type": "string",
             "description": "Cache TTL for SQL results. Examples: '24h', '12h', '30m', '7d', 'off'. Default: '24h'",
             "default": "24h"
+          },
+          "cache_format": {
+            "type": "string",
+            "enum": [
+              "parquet",
+              "csv"
+            ],
+            "default": "parquet",
+            "description": "Cache file format. 'csv' produces Excel-openable files. Default: 'parquet'"
+          },
+          "url_from": {
+            "type": "object",
+            "description": "Resolve download URL from a JSON metadata API",
+            "properties": {
+              "endpoint": {
+                "type": "string",
+                "description": "URL of the JSON metadata API"
+              },
+              "json_path": {
+                "type": "string",
+                "description": "Dot-notation path to extract the download URL"
+              }
+            },
+            "required": [
+              "endpoint",
+              "json_path"
+            ]
           }
         },
         "additionalProperties": false

@@ -1,0 +1,98 @@
+# GLEIF LEI Lookup - Match vendor names against GLEIF golden copy
+#
+# Downloads the latest LEI entity records (~3.3M) from GLEIF's API and
+# fuzzy-matches your vendor names to find their Legal Entity Identifier.
+#
+# Run:
+#   python3 -m src --recipe config/recipes/gleif_lei_lookup.yaml --dry-run
+#   python3 -m src --recipe config/recipes/gleif_lei_lookup.yaml
+
+name: GLEIF LEI Vendor Lookup
+description: >
+  Match internal vendor names against the GLEIF LEI golden copy to
+  identify Legal Entity Identifiers for third-party entities.
+
+sources:
+  vendors:
+    file: core_parent_export.csv
+    type: multi_population
+
+  gleif:
+    loader: http
+    url_from:
+      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
+      json_path: "data[0].lei2.full_file.csv.url"
+    format: zip
+    columns:
+      - LEI
+      - Entity.LegalName
+      - Entity.LegalAddress.FirstAddressLine
+      - Entity.LegalAddress.City
+      - Entity.LegalAddress.Country
+      - Registration.RegistrationStatus
+    cache_ttl: "7d"
+    cache_format: csv
+    timeout: 300
+    type: trusted_reference
+
+populations:
+  vendor_pop:
+    source: vendors
+    record_key: Vendor ID
+    filter: []
+
+  gleif_active:
+    source: gleif
+    record_key: LEI
+    filter:
+      - field: Registration.RegistrationStatus
+        op: eq
+        value: "ISSUED"
+
+steps:
+  - name: Exact vendor name to LEI
+    source: vendor_pop
+    destination: gleif_active
+    match_fields:
+      - source: Vendor Name
+        destination: Entity.LegalName
+        method: exact
+        tiers: [raw, clean, normalized]
+
+  - name: Fuzzy vendor name to LEI
+    source: vendor_pop
+    destination: gleif_active
+    match_fields:
+      - source: Vendor Name
+        destination: Entity.LegalName
+        method: fuzzy
+        threshold: 85
+        tiers: [clean, normalized]
+
+output:
+  format: xlsx
+  path: output/gleif_lei_results.xlsx
+  match_mode: best_match
+  tabs:
+    - name: Matched
+      type: matched_records
+    - name: Unmatched
+      type: unmatched_review
+  columns:
+    matched:
+      - field: Vendor Name
+        header: Vendor Name
+      - field: Vendor ID
+        header: Vendor ID
+      - field: LEI
+        header: LEI
+      - field: Entity.LegalName
+        header: GLEIF Legal Name
+      - field: Entity.LegalAddress.Country
+        header: Country
+      - field: match_step
+        header: Match Step
+      - field: match_tier
+        header: Match Tier
+      - field: name_score
+        header: Name Score

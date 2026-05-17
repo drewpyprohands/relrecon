@@ -125,14 +125,14 @@ def profile_column(series, ranges: Optional[dict] = None) -> dict:
     # Fast path: count ASCII chars in bulk via Polars
     # Total chars across all non-empty cells
     char_lens = s.str.len_chars()
-    total_chars = int(char_lens.filter(non_empty).sum())
+    int(char_lens.filter(non_empty).sum())
 
     # Count ASCII alnum and punct/space chars using Polars regex
     alnum_counts = s.str.count_matches(r'[0-9A-Za-z]')
     punct_counts = s.str.count_matches(r'[\t\n\r \x0b\x0c!-/:-@\[-`{-~]')
     total_alnum = int(alnum_counts.filter(non_empty).sum())
     total_punct = int(punct_counts.filter(non_empty).sum())
-    total_ascii = total_alnum + total_punct
+    total_alnum + total_punct
 
     bucket_totals = {}
     if total_alnum > 0:
@@ -154,7 +154,7 @@ def profile_column(series, ranges: Optional[dict] = None) -> dict:
         idx_series = pl.arange(0, s.len(), eager=True).filter(has_non_ascii)
         val_series = s.filter(has_non_ascii)
 
-        for orig_idx, val in zip(idx_series.to_list(), val_series.to_list()):
+        for orig_idx, val in zip(idx_series.to_list(), val_series.to_list(), strict=False):
             if not val:
                 continue
             profile = profile_string(val, ranges)

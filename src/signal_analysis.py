@@ -21,16 +21,13 @@ Polars-native operations used throughout per ADR-001.
 
 import json
 import re
-import sys
-from collections import Counter
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import polars as pl
 
-from normalize import clean, profile_column as unicode_profile_column, _load_ranges
-
+from normalize import clean
+from normalize import profile_column as unicode_profile_column
 
 # ---------------------------------------------------------------------------
 # Column type detection
@@ -279,8 +276,8 @@ def near_duplicate_tokens(series: pl.Series, tier: str = "clean",
     seen = set()
     sorted_lens = sorted(by_len.keys())
 
-    for i, l in enumerate(sorted_lens):
-        group = by_len[l]
+    for i, length in enumerate(sorted_lens):
+        group = by_len[length]
         # Compare within same length
         for a_idx in range(len(group)):
             for b_idx in range(a_idx + 1, len(group)):
@@ -296,8 +293,8 @@ def near_duplicate_tokens(series: pl.Series, tier: str = "clean",
                             "count1": counts[a], "count2": counts[b],
                         })
         # Compare with adjacent length (+1)
-        if i + 1 < len(sorted_lens) and sorted_lens[i + 1] == l + 1:
-            adj_group = by_len[l + 1]
+        if i + 1 < len(sorted_lens) and sorted_lens[i + 1] == length + 1:
+            adj_group = by_len[length + 1]
             for a in group:
                 for b in adj_group:
                     sim = fuzz.ratio(a, b)
@@ -313,9 +310,9 @@ def near_duplicate_tokens(series: pl.Series, tier: str = "clean",
         # Compare with length +2
         if i + 1 < len(sorted_lens):
             for j in range(i + 1, len(sorted_lens)):
-                if sorted_lens[j] > l + 2:
+                if sorted_lens[j] > length + 2:
                     break
-                if sorted_lens[j] == l + 2:
+                if sorted_lens[j] == length + 2:
                     adj_group = by_len[sorted_lens[j]]
                     for a in group:
                         for b in adj_group:
@@ -715,6 +712,7 @@ def analyze_dataset(df: pl.DataFrame, columns: list,
     # Write config files if output_dir specified
     if output_dir:
         out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
 
         with open(out / "stopwords.json", "w") as f:
             json.dump({k: sorted(v) for k, v in all_stopwords.items()}, f, indent=2)

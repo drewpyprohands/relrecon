@@ -234,7 +234,7 @@ def main() -> int:
     elif _profile:
         _t = _ptime.time()
         try:
-            from postal.parser import parse_address as _lp
+            from postal.parser import parse_address as _lp  # noqa: F401
             print(f"[profile] libpostal import: {_ptime.time()-_t:.3f}s (available)")
         except (ImportError, SystemError, OSError):
             print(f"[profile] libpostal import: {_ptime.time()-_t:.3f}s (not available)")
@@ -243,9 +243,14 @@ def main() -> int:
         _t = _ptime.time()
 
     from recipe import (
-        load_recipe, validate_recipe, load_source, filter_population,
-        build_filter_expr, validate_fields, format_validation_summary,
         RecipeValidationError,
+        build_filter_expr,
+        filter_population,
+        format_validation_summary,
+        load_recipe,
+        load_source,
+        validate_fields,
+        validate_recipe,
     )
     if _profile:
         print(f"[profile] recipe imports: {_ptime.time()-_t:.3f}s")
@@ -340,7 +345,7 @@ def main() -> int:
         print(summary)
         return 1 if val_errors else 0
 
-    print("Running matching pipeline...")
+    print("Loading sources...")
     t0 = time.time()
     try:
         result = run_pipeline(recipe, base_dir=str(data_dir))

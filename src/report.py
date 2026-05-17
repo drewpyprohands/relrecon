@@ -14,9 +14,8 @@ from typing import Optional
 
 import polars as pl
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-
 
 # ---------------------------------------------------------------------------
 # Styling
@@ -181,7 +180,7 @@ def _coalesce_variant_columns(df: pl.DataFrame, column_defs: list) -> pl.DataFra
             col_name, header = entry
             header_variants.setdefault(header, []).append(col_name)
 
-    for header, variants in header_variants.items():
+    for _header, variants in header_variants.items():
         present = [v for v in variants if v in df.columns]
         if len(present) > 1:
             df = df.with_columns(
@@ -191,7 +190,8 @@ def _coalesce_variant_columns(df: pl.DataFrame, column_defs: list) -> pl.DataFra
 
 
 # Backward-compatible alias (used by legacy code paths without recipe-driven columns)
-_coalesce_dest_columns = lambda df: _coalesce_variant_columns(df, DEST_COLUMNS)
+def _coalesce_dest_columns(df):
+    return _coalesce_variant_columns(df, DEST_COLUMNS)
 
 
 def _resolve_columns(df: pl.DataFrame, column_defs: list) -> list:
@@ -339,8 +339,8 @@ def run_and_report(recipe_path: str, base_dir: str = ".",
     Returns:
         Path to generated report
     """
-    from recipe import load_recipe
     from matching import run_pipeline
+    from recipe import load_recipe
 
     recipe = load_recipe(recipe_path)
     result = run_pipeline(recipe, base_dir=base_dir)

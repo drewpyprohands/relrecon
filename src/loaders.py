@@ -58,13 +58,13 @@ def _parse_ttl(ttl_str: str) -> float | None:
         if s.endswith(suffix):
             try:
                 return float(s[:-1]) * mult
-            except ValueError:
-                raise ValueError(f"Invalid cache_ttl: {ttl_str}")
+            except ValueError as err:
+                raise ValueError(f"Invalid cache_ttl: {ttl_str}") from err
 
     try:
         return float(s)
-    except ValueError:
-        raise ValueError(f"Invalid cache_ttl: {ttl_str}")
+    except ValueError as err:
+        raise ValueError(f"Invalid cache_ttl: {ttl_str}") from err
 
 
 def _cache_key(source_config: dict) -> str:
@@ -74,14 +74,25 @@ def _cache_key(source_config: dict) -> str:
         "driver": source_config.get("driver", ""),
         "connection": conn,
         "query": source_config.get("query", ""),
+        "url": source_config.get("url", ""),
+        "columns": source_config.get("columns", []),
+        "url_from": source_config.get("url_from", {}),
     }, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:8]
+
+
+def _cache_ext(source_config: dict) -> str:
+    fmt = str(source_config.get("cache_format", "parquet")).lower()
+    if fmt in ("csv", "tsv"):
+        return ".csv"
+    return ".parquet"
 
 
 def _get_cache_path(source_config: dict, base_dir: str,
                     recipe_name: str = "", source_name: str = "") -> Path:
     key = _cache_key(source_config)
     date_str = time.strftime("%Y%m%d")
+    ext = _cache_ext(source_config)
 
     parts = []
     if recipe_name:
@@ -91,15 +102,16 @@ def _get_cache_path(source_config: dict, base_dir: str,
     parts.append(date_str)
     parts.append(key)
 
-    return Path(base_dir) / CACHE_DIR / ("_".join(parts) + ".parquet")
+    return Path(base_dir) / CACHE_DIR / ("_".join(parts) + ext)
 
 
 def _find_cached_file(source_config: dict, base_dir: str) -> Path | None:
     key = _cache_key(source_config)
+    ext = _cache_ext(source_config)
     cache_dir = Path(base_dir) / CACHE_DIR
     if not cache_dir.exists():
         return None
-    for f in cache_dir.glob(f"*_{key}.parquet"):
+    for f in cache_dir.glob(f"*_{key}{ext}"):
         return f
     return None
 
@@ -122,6 +134,10 @@ def _read_cache(source_config: dict, base_dir: str,
         return None
 
     logger.info("Cache hit (%.0fs old): %s", age, cache_path.name)
+    print(f"    Using cache: {cache_path.name} ({age/3600:.1f}h old)", flush=True)
+    ext = _cache_ext(source_config)
+    if ext == ".csv":
+        return pl.read_csv(str(cache_path), infer_schema_length=0)
     return pl.read_parquet(str(cache_path))
 
 
@@ -132,14 +148,18 @@ def _write_cache(df: pl.DataFrame, source_config: dict, base_dir: str,
         return
 
     key = _cache_key(source_config)
+    ext = _cache_ext(source_config)
     cache_dir = Path(base_dir) / CACHE_DIR
     if cache_dir.exists():
-        for old in cache_dir.glob(f"*_{key}.parquet"):
+        for old in cache_dir.glob(f"*_{key}{ext}"):
             old.unlink(missing_ok=True)
 
     cache_path = _get_cache_path(source_config, base_dir, recipe_name, source_name)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(str(cache_path))
+    if ext == ".csv":
+        df.write_csv(str(cache_path))
+    else:
+        df.write_parquet(str(cache_path))
     logger.info("Cached %d rows to %s", df.height, cache_path.name)
 
 
@@ -210,10 +230,10 @@ def load_sql(source_config: dict, base_dir: str = ".",
 
 def _load_trino(conn_config: dict, query: str) -> pl.DataFrame:
     try:
-        from trino.dbapi import connect
         from trino.auth import BasicAuthentication
-    except ImportError:
-        raise ImportError("Trino driver not installed. Run: pip install trino")
+        from trino.dbapi import connect
+    except ImportError as err:
+        raise ImportError("Trino driver not installed. Run: pip install trino") from err
 
     user = conn_config.get("user", "")
     password = conn_config.get("password")
@@ -280,10 +300,10 @@ def _load_sqlite(conn_config: dict, query: str, base_dir: str) -> pl.DataFrame:
 def _load_postgresql(conn_config: dict, query: str) -> pl.DataFrame:
     try:
         import psycopg2
-    except ImportError:
+    except ImportError as err:
         raise ImportError(
             "PostgreSQL driver not installed. Run: pip install psycopg2-binary"
-        )
+        ) from err
 
     conn_kwargs = {
         "host": conn_config.get("host", "localhost"),
@@ -306,9 +326,244 @@ def _load_postgresql(conn_config: dict, query: str) -> pl.DataFrame:
     return _rows_to_dataframe(columns, rows)
 
 
+def _resolve_json_path(data: dict, path: str):
+    """Extract a value from nested JSON using a dot/bracket path."""
+    import re
+    current = data
+    # Split on dots but handle bracket notation
+    tokens = re.split(r'\.|(?=\[)', path)
+    tokens = [t for t in tokens if t]
+    for token in tokens:
+        # Handle bracket indexing like [0] or key[0]
+        bracket_match = re.match(r'^([^\[]*)?\[(\d+)\]$', token)
+        if bracket_match:
+            key, idx = bracket_match.group(1), int(bracket_match.group(2))
+            if key:
+                current = current[key]
+            current = current[idx]
+        else:
+            current = current[token]
+    return current
+
+
+def _resolve_url_from(url_from_config: dict, verify, timeout: float) -> str:
+    """Resolve a download URL by fetching a JSON metadata endpoint."""
+    try:
+        import httpx
+    except ImportError as err:
+        raise ImportError("HTTP loader requires httpx. Run: pip install httpx") from err
+
+    endpoint = url_from_config.get("endpoint", "").strip()
+    json_path = url_from_config.get("json_path", "").strip()
+    headers = url_from_config.get("headers", {})
+
+    if not endpoint:
+        raise ValueError("url_from requires an 'endpoint' field")
+    if not json_path:
+        raise ValueError("url_from requires a 'json_path' field")
+
+    logger.info("Resolving download URL from %s", endpoint)
+    with httpx.Client(verify=verify, timeout=timeout, follow_redirects=True) as client:
+        resp = client.get(endpoint, headers=headers)
+        resp.raise_for_status()
+
+    data = resp.json()
+    try:
+        resolved = _resolve_json_path(data, json_path)
+    except (KeyError, IndexError, TypeError) as e:
+        raise ValueError(
+            f"Could not extract URL from {endpoint} at path '{json_path}': {e}"
+        ) from e
+
+    if not isinstance(resolved, str) or not resolved.startswith("http"):
+        raise ValueError(
+            f"Resolved value is not a valid URL: {resolved!r} "
+            f"(from {endpoint} at path '{json_path}')"
+        )
+
+    logger.info("Resolved URL: %s", resolved)
+    return resolved
+
+
+def load_http(source_config: dict, base_dir: str = ".",
+              recipe_name: str = "", source_name: str = "") -> pl.DataFrame:
+    """Download a file from a URL (or resolve via url_from) and load as DataFrame."""
+    config = _interpolate_dict(source_config)
+    url = config.get("url", "").strip()
+    url_from = config.get("url_from")
+
+    if not url and not url_from:
+        raise ValueError("HTTP loader requires a 'url' or 'url_from' field")
+
+    if url_from and not url:
+        verify = config.get("verify", True)
+        timeout = float(config.get("timeout", 300))
+        if isinstance(verify, str):
+            if verify.lower() in ("false", "0", "no"):
+                verify = False
+            elif verify.lower() in ("true", "1", "yes"):
+                verify = True
+        url = _resolve_url_from(url_from, verify, timeout)
+        config["url"] = url
+
+    cached = _read_cache(config, base_dir, recipe_name, source_name)
+    if cached is not None:
+        return cached
+
+    df = _fetch_and_parse(config, base_dir)
+
+    columns = config.get("columns")
+    if columns:
+        df = df.select(columns)
+
+    _write_cache(df, config, base_dir, recipe_name, source_name)
+    return df
+
+
+def _fetch_and_parse(config: dict, base_dir: str) -> pl.DataFrame:
+    """Download URL content and parse into a DataFrame."""
+    import io
+
+    try:
+        import httpx
+    except ImportError as err:
+        raise ImportError("HTTP loader requires httpx. Run: pip install httpx") from err
+
+    url = config["url"]
+    fmt = config.get("format", "").lower()
+    zip_entry = config.get("zip_entry")
+    headers = config.get("headers", {})
+    verify = config.get("verify", True)
+    timeout = float(config.get("timeout", 300))
+
+    if isinstance(verify, str):
+        if verify.lower() in ("false", "0", "no"):
+            verify = False
+        elif verify.lower() in ("true", "1", "yes"):
+            verify = True
+
+    logger.info("Downloading %s", url)
+    print(f"    Downloading: {url.split('/')[-1][:60]}...", flush=True)
+    with httpx.Client(verify=verify, timeout=timeout, follow_redirects=True) as client:
+        resp = client.get(url, headers=headers)
+        resp.raise_for_status()
+
+    data = resp.content
+    size_mb = len(data) / (1024 * 1024)
+    print(f"    Downloaded: {size_mb:.1f} MB", flush=True)
+    content_type = resp.headers.get("content-type", "")
+
+    if not fmt:
+        fmt = _detect_format(url, content_type)
+
+    if fmt == "zip" or url.lower().endswith(".zip"):
+        data, fmt = _extract_from_zip(data, zip_entry, fmt)
+
+    if fmt in ("csv", "tsv"):
+        separator = "\t" if fmt == "tsv" else ","
+        df = pl.read_csv(io.BytesIO(data), infer_schema_length=0, separator=separator)
+    elif fmt == "parquet":
+        df = pl.read_parquet(io.BytesIO(data))
+    elif fmt == "json" or fmt == "jsonl":
+        df = pl.read_ndjson(io.BytesIO(data)) if fmt == "jsonl" else pl.read_json(io.BytesIO(data))
+        df = df.cast({col: pl.String for col in df.columns})
+    else:
+        raise ValueError(
+            f"Cannot determine format for URL: {url}. "
+            f"Set 'format' explicitly (csv, tsv, parquet, json, jsonl, zip)."
+        )
+
+    if fmt == "parquet":
+        df = df.cast({col: pl.String for col in df.columns})
+
+    logger.info("Loaded %d rows x %d cols from %s", df.height, df.width, url)
+    return df
+
+
+def _detect_format(url: str, content_type: str) -> str:
+    """Best-effort format detection from URL path or content-type."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path.lower()
+
+    # Strip .gz/.zip suffix to find the inner format
+    if path.endswith(".zip"):
+        inner = path[:-4]
+        if inner.endswith(".csv"):
+            return "zip"
+        return "zip"
+    if path.endswith(".csv") or path.endswith(".csv.gz"):
+        return "csv"
+    if path.endswith(".tsv") or path.endswith(".tsv.gz"):
+        return "tsv"
+    if path.endswith(".parquet"):
+        return "parquet"
+    if path.endswith(".json"):
+        return "json"
+    if path.endswith(".jsonl") or path.endswith(".ndjson"):
+        return "jsonl"
+
+    # Fallback to content-type
+    if "csv" in content_type:
+        return "csv"
+    if "parquet" in content_type:
+        return "parquet"
+    if "json" in content_type:
+        return "json"
+
+    return ""
+
+
+def _extract_from_zip(data: bytes, zip_entry: str | None, outer_fmt: str) -> tuple[bytes, str]:
+    """Extract a file from a ZIP archive, return (bytes, format)."""
+    import io
+    import zipfile
+
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    names = zf.namelist()
+    # Filter out directories and __MACOSX junk
+    data_files = [n for n in names if not n.endswith("/") and "__MACOSX" not in n]
+
+    if not data_files:
+        raise ValueError("ZIP archive is empty")
+
+    if zip_entry:
+        if zip_entry not in data_files:
+            raise ValueError(
+                f"zip_entry '{zip_entry}' not found in archive. "
+                f"Available: {data_files[:10]}"
+            )
+        target = zip_entry
+    elif len(data_files) == 1:
+        target = data_files[0]
+    else:
+        # Pick the largest file as a heuristic
+        target = max(data_files, key=lambda n: zf.getinfo(n).file_size)
+        logger.info("ZIP has %d files, picking largest: %s", len(data_files), target)
+
+    extracted = zf.read(target)
+
+    # Detect inner format
+    lower = target.lower()
+    if lower.endswith(".csv"):
+        inner_fmt = "csv"
+    elif lower.endswith(".tsv"):
+        inner_fmt = "tsv"
+    elif lower.endswith(".parquet"):
+        inner_fmt = "parquet"
+    elif lower.endswith(".json"):
+        inner_fmt = "json"
+    elif lower.endswith(".jsonl") or lower.endswith(".ndjson"):
+        inner_fmt = "jsonl"
+    else:
+        inner_fmt = "csv"
+
+    return extracted, inner_fmt
+
+
 LOADERS = {
     "file": load_file,
     "sql": load_sql,
+    "http": load_http,
 }
 
 

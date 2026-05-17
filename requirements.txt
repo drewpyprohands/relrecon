@@ -6,6 +6,9 @@ openpyxl
 pyyaml
 jsonschema
 
+# HTTP loader (remote file downloads)
+httpx
+
 # Optional: international address parsing (better accuracy, requires C library)
 # Install libpostal first: see docs/implementation-plan.md#libpostal-installation
 # postal

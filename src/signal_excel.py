@@ -17,9 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 # ---------------------------------------------------------------------------
 # Styling (matches report.py conventions)
@@ -261,7 +259,7 @@ def _build_alias_sheet(ws, results: dict):
         _style_header(ws, 1, i, h)
 
     row = 2
-    for col_name, col_data in results.get("columns", {}).items():
+    for _col_name, col_data in results.get("columns", {}).items():
         aliases = col_data.get("suggested_aliases", [])
         for ag in aliases:
             canonical = ag.get("canonical", "")

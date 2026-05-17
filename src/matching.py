@@ -10,15 +10,14 @@ Address scoring uses RapidFuzz batch ops where possible.
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
-import polars as pl
 import numpy as np
-from rapidfuzz import fuzz as rfuzz, process as rprocess
+import polars as pl
+from rapidfuzz import fuzz as rfuzz
+from rapidfuzz import process as rprocess
 
-from normalize import clean, normalized
 from address import score_address_multi_tier
-
+from normalize import clean, normalized
 
 # ---------------------------------------------------------------------------
 # Date gate (Polars native)
@@ -50,7 +49,7 @@ def apply_date_gate(df: pl.DataFrame, field: str, max_age_years: int) -> pl.Data
 
             if result.height > 0:
                 return result
-        except Exception:
+        except Exception:  # noqa: S112
             continue
 
     # Fallback: string comparison (ISO dates sort correctly)
@@ -514,7 +513,7 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                     rej = street_fail.select(dedup_field, "addr_score")
                     rejections["street_mismatch"] = dict(
                         zip(rej[dedup_field].cast(pl.String).to_list(),
-                            rej["addr_score"].to_list())
+                            rej["addr_score"].to_list(), strict=False)
                     )
             matched = matched.filter(pl.col("addr_street_match"))
 
@@ -526,7 +525,7 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                     rej = below.select(dedup_field, "addr_score")
                     rejections["addr_below_threshold"] = dict(
                         zip(rej[dedup_field].cast(pl.String).to_list(),
-                            rej["addr_score"].to_list())
+                            rej["addr_score"].to_list(), strict=False)
                     )
             matched = matched.filter(pl.col("addr_score") >= cutoff)
 
@@ -561,17 +560,23 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
         - timing: {load, setup, match, resolve} in seconds
     """
     import time as _time
-    from recipe import load_source, filter_population, build_filter_expr
+
+    from recipe import build_filter_expr, filter_population, load_source
     timings = {}
 
     t = _time.time()
     sources = {}
     for name, cfg in recipe["sources"].items():
+        loader_type = cfg.get("loader", "file")
+        src_t = _time.time()
+        print(f"  Loading source '{name}' ({loader_type})...", flush=True)
         sources[name] = load_source(
             cfg, base_dir,
             recipe_name=recipe.get("name", ""),
             source_name=name,
         )
+        src_elapsed = _time.time() - src_t
+        print(f"    -> {sources[name].height:,} rows x {sources[name].width} cols ({src_elapsed:.1f}s)", flush=True)
 
     # Pre-validate filter fields before building populations
     filter_errors = []
@@ -588,8 +593,9 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
                     f"not found. Available: {available}"
                 )
     if filter_errors:
-        from recipe import RecipeValidationError
         import sys
+
+        from recipe import RecipeValidationError
         for e in filter_errors:
             print(f"[ERROR] {e}", file=sys.stderr)
         raise RecipeValidationError(
@@ -634,7 +640,7 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
         pop_data["df"] = remainder
 
     # Semantic field validation (runs every time, not just dry-run)
-    from recipe import validate_fields, RecipeValidationError
+    from recipe import RecipeValidationError, validate_fields
     val_errors, val_warnings = validate_fields(recipe, sources, populations)
     for w in val_warnings:
         import sys
@@ -648,6 +654,7 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
         )
 
     timings["load"] = _time.time() - t
+    print("Running matching pipeline...", flush=True)
 
     t = _time.time()
     norm_cfg = recipe.get("normalization", {})
@@ -819,7 +826,7 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
     # Unmatched
     pop1_name = recipe["steps"][0]["source"]
     pop1_df = populations.get(pop1_name, {}).get("df", pl.DataFrame())
-    src_field = recipe["steps"][0]["match_fields"][0]["source"]
+    recipe["steps"][0]["match_fields"][0]["source"]
 
     if pop1_df.height > 0 and track_field in pop1_df.columns:
         unmatched = pop1_df.filter(~pl.col(track_field).is_in(list(matched_source_keys)))

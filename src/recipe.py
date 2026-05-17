@@ -7,7 +7,6 @@ and parses the filter DSL into Polars expressions.
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -452,7 +451,7 @@ def format_validation_summary(
         warnings = list(warnings) + schema_warnings
     lines = []
     lines.append(f"Recipe: {recipe.get('name', 'unnamed')}")
-    lines.append(f"Schema: ✅ valid")
+    lines.append("Schema: ✅ valid")
     lines.append("")
 
     lines.append("Sources:")
@@ -468,7 +467,7 @@ def format_validation_summary(
         pop_cfg = pop_data["config"]
         row_count = df.height if df is not None else 0
         action = pop_cfg.get("action", "")
-        label = f" (excluded)" if action == "exclude" else ""
+        label = " (excluded)" if action == "exclude" else ""
         filters = pop_cfg.get("filter", [])
         if filters:
             filter_parts = []
