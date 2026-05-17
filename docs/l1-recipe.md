@@ -34,8 +34,8 @@ The only reliable field for the migrated records is the **child/vendor name (`l3
 > **Note:** The `source.type` field in the recipe (e.g. `type: trusted_reference`) is informational only -- it documents intent but has no runtime effect.
 
 > [!IMPORTANT]
-> Pop1's parent-level fields were populated with placeholder or incorrect data during migration. The recipe marks these as `invalid_fields` in the population config (currently informational only).
-> The `invalid_fields` key has no runtime effect currently -- it's informational only for future plans.
+> Pop1's parent-level fields were populated with placeholder or incorrect data during migration. The recipe marks these as `invalid_fields` in the population config (currently informational only, see [Issue #74](https://git.drewpy.pro/drewpypro/relational_matching/issues/74)).
+> The `invalid_fields` key has no runtime effect currently -- it's informational only. See [Issue #74](https://git.drewpy.pro/drewpypro/relational_matching/issues/74) for future plans.
 > The goal is to derive correct L1 by matching L3 names against trusted sources and inheriting the parent relationship.
 
 ## Datasets
@@ -255,3 +255,21 @@ The output section also supports a `tie_breaker` config for selecting among dupl
 - Pop3 is not guaranteed clean. Exact matching required
 - Report must be auditable (show *why* each match fired)
 - Must run on local developer hardware (HP ZBook: Ryzen 9 PRO 7940HS 8-core, 64GB RAM)
+
+## Recipe Variants
+
+Several recipe variants demonstrate different features and trade-offs:
+
+| Recipe | Match Rate | Key Difference |
+|---|---|---|
+| `l1_reconciliation.yaml` | ~69% (31/45) | Baseline 4-step cascade with 2-field address |
+| `l1_recon_80.yaml` | ~80% (36/45) | Higher match rate with street_weight=0.75 |
+| `step_defaults_example.yaml` | ~84% (38/45) | Uses step_defaults + core_parent fallback |
+
+### step_defaults
+
+The `step_defaults` feature reduces recipe verbosity by defining `address_support` and `inherit` blocks once at the top level. Steps inherit these defaults unless they provide a local override. Compare `step_defaults_example.yaml` (compact) with `l1_recon_80.yaml` (explicit per-step) to see the difference.
+
+### Address Field Selection
+
+The test dataset has three address fields: `hq_addr1` (street), `hq_addr2` (city/state/zip), and `hq_addr3` (country). Using 2-field matching (addr1 + addr2) vs 3-field (addr1 + addr2 + addr3) produces different address scores but matches the same records. The 3-field approach was removed because `hq_addr3` is primarily country codes, which adds noise to address scoring without improving match accuracy.

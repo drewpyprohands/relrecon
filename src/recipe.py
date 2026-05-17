@@ -78,8 +78,15 @@ def _apply_step_defaults(recipe: dict) -> dict:
     defaults = recipe.pop("step_defaults", None)
     if not defaults:
         return recipe
+    # Apply to top-level steps (single-phase)
     for i, step in enumerate(recipe.get("steps", [])):
         recipe["steps"][i] = _deep_merge(defaults, step)
+    # Apply to phase steps (multi-phase)
+    for phase in recipe.get("phases", []):
+        phase_defaults = phase.pop("step_defaults", defaults)
+        if phase_defaults:
+            for i, step in enumerate(phase.get("steps", [])):
+                phase["steps"][i] = _deep_merge(phase_defaults, step)
     return recipe
 
 
@@ -134,7 +141,11 @@ def validate_recipe(recipe: dict) -> list[str]:
     critical: list[str] = []
 
     # Fallback for environments without jsonschema
-    required = ["name", "sources", "populations", "steps", "output"]
+    is_multi_phase = "phases" in recipe
+    if is_multi_phase:
+        required = ["name", "sources", "phases", "output"]
+    else:
+        required = ["name", "sources", "populations", "steps", "output"]
     missing = [k for k in required if k not in recipe]
     if missing:
         critical.append(f"Recipe missing required fields: {missing}")
@@ -143,8 +154,16 @@ def validate_recipe(recipe: dict) -> list[str]:
         if "file" not in src and "loader" not in src:
             critical.append(f"Source '{name}' missing 'file' or 'loader' field")
 
+    # Collect all steps (from phases or top-level)
+    all_steps = []
+    if is_multi_phase:
+        for phase in recipe.get("phases", []):
+            all_steps.extend(phase.get("steps", []))
+    else:
+        all_steps = recipe.get("steps", [])
+
     step_names_seen: dict[str, int] = {}
-    for i, step in enumerate(recipe.get("steps", [])):
+    for i, step in enumerate(all_steps):
         for k in ["name", "source", "destination", "match_fields"]:
             if k not in step:
                 critical.append(f"Step {i} ('{step.get('name', '?')}') missing '{k}'")
@@ -160,10 +179,19 @@ def validate_recipe(recipe: dict) -> list[str]:
     if "output" in recipe and "format" not in recipe["output"]:
         critical.append("Output missing 'format' field")
 
-    source_pops = {step["source"] for step in recipe.get("steps", []) if "source" in step}
-    dest_pops = {step["destination"] for step in recipe.get("steps", []) if "destination" in step}
+    source_pops = {step["source"] for step in all_steps if "source" in step}
+    dest_pops = {step["destination"] for step in all_steps if "destination" in step}
+
+    # Collect all populations across phases or top-level
+    all_populations = {}
+    if is_multi_phase:
+        for phase in recipe.get("phases", []):
+            all_populations.update(phase.get("populations", {}))
+    else:
+        all_populations = recipe.get("populations", {})
+
     for pop_name in source_pops:
-        pop_cfg = recipe.get("populations", {}).get(pop_name, {})
+        pop_cfg = all_populations.get(pop_name, {})
         if pop_cfg.get("action") == "exclude":
             critical.append(
                 f'Population "{pop_name}" has action: exclude but is used as a '
@@ -179,7 +207,7 @@ def validate_recipe(recipe: dict) -> list[str]:
             )
 
     for pop_name in dest_pops:
-        pop_cfg = recipe.get("populations", {}).get(pop_name, {})
+        pop_cfg = all_populations.get(pop_name, {})
         if pop_cfg.get("action") == "exclude":
             warnings.append(
                 f'Population "{pop_name}" has action: exclude but is used as a '
@@ -310,8 +338,17 @@ def validate_fields(
             else:
                 warnings.append(msg)
 
+    # Get populations and steps for multi-phase or single-phase
+    if "phases" in recipe:
+        # For multi-phase, only validate the populations passed in
+        recipe_populations = {}
+        recipe_steps = []
+    else:
+        recipe_populations = recipe["populations"]
+        recipe_steps = recipe["steps"]
+
     # Validate population filter fields
-    for pop_name, pop_cfg in recipe["populations"].items():
+    for pop_name, pop_cfg in recipe_populations.items():
         src_name = pop_cfg.get("source", "")
         if src_name not in sources:
             continue  # Source loading would have already failed
@@ -325,7 +362,7 @@ def validate_fields(
                 )
 
     # Validate step field references
-    for i, step in enumerate(recipe["steps"]):
+    for i, step in enumerate(recipe_steps):
         step_label = f'Step {i+1} "{step.get("name", "?")}"'
         src_pop = step.get("source", "")
         dst_pop = step.get("destination", "")
