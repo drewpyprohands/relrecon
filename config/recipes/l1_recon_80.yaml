@@ -1,3 +1,12 @@
+# L1 Reconciliation -- 80% Target
+#
+# 4-step matching against pop3 only (no core_parent fallback).
+# Uses street_weight=0.75 for address scoring to emphasize street
+# name matches over city/state. Produces ~80% match rate (36/45).
+#
+# For a version with core_parent fallback (84%), see
+# step_defaults_example.yaml.
+
 name: L1 Reconc Rollup 80 All
 description: Reconcile Pop1 parent IDs to trusted L1 records
 

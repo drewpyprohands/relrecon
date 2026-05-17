@@ -120,14 +120,23 @@ def match_names_exact(source_df: pl.DataFrame, dest_df: pl.DataFrame,
             src = _clean_column(source_df, src_field, "_match_key")
             dst = _clean_column(dest_df, dst_field, "_match_key")
 
+        # Pick a suffix that won't collide with existing columns.
+        # In multi-phase pipelines, _previous_matched may already carry
+        # _dst columns from prior phases.
+        suffix = "_dst"
+        src_cols = set(src.columns)
+        dst_cols_to_add = set(dst.columns) - {"_match_key"}
+        while any((c + suffix) in src_cols for c in dst_cols_to_add if c in src_cols):
+            suffix = suffix + "2"
+
         matched = src.join(
-            dst, on="_match_key", how="inner", suffix="_dst",
+            dst, on="_match_key", how="inner", suffix=suffix,
             maintain_order="right",  # preserve dest ordering for tie-breaker pre-sort
         )
 
         # Exclude self-matches for same-population matching
         if exclude_self_key and matched.height > 0:
-            dst_key = exclude_self_key + "_dst" if exclude_self_key + "_dst" in matched.columns else None
+            dst_key = exclude_self_key + suffix if exclude_self_key + suffix in matched.columns else None
             if dst_key and exclude_self_key in matched.columns:
                 matched = matched.filter(
                     pl.col(exclude_self_key).cast(pl.String) != pl.col(dst_key).cast(pl.String)
@@ -239,10 +248,16 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         matched_src = src[src_idxs].drop("_match_key")
         matched_dst = dst[dst_idxs].drop("_match_key")
 
+        # Use a suffix that won't collide with existing _dst columns
+        # from prior multi-phase matches
+        fsuffix = "_dst"
+        src_col_set = set(matched_src.columns)
+        while any((c + fsuffix) in src_col_set for c in matched_dst.columns if c in src_col_set):
+            fsuffix = fsuffix + "2"
         dst_renames = {}
         for col in matched_dst.columns:
             if col in matched_src.columns:
-                dst_renames[col] = col + "_dst"
+                dst_renames[col] = col + fsuffix
         if dst_renames:
             matched_dst = matched_dst.rename(dst_renames)
 
@@ -545,79 +560,34 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
 
 
 # ---------------------------------------------------------------------------
-# Full pipeline
+# Full pipeline -- helper functions
 # ---------------------------------------------------------------------------
 
-def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
-    """Run the complete matching pipeline from a recipe.
+def _build_populations(recipe_pops: dict, sources: dict) -> dict:
+    """Build population DataFrames from recipe config and loaded sources.
 
-    Returns:
-        dict with keys:
-        - matched: pl.DataFrame of matched records
-        - unmatched: pl.DataFrame of unmatched records with reason codes
-        - populations: dict of {name: DataFrame} for each population
-        - stats: {total_source, matched_count, unmatched_count}
-        - timing: {load, setup, match, resolve} in seconds
+    Handles filtered populations, remainder populations (empty filter),
+    and _previous_matched references for multi-phase pipelines.
     """
-    import time as _time
+    from recipe import build_filter_expr, filter_population
 
-    from recipe import build_filter_expr, filter_population, load_source
-    timings = {}
-
-    t = _time.time()
-    sources = {}
-    for name, cfg in recipe["sources"].items():
-        loader_type = cfg.get("loader", "file")
-        src_t = _time.time()
-        print(f"  Loading source '{name}' ({loader_type})...", flush=True)
-        sources[name] = load_source(
-            cfg, base_dir,
-            recipe_name=recipe.get("name", ""),
-            source_name=name,
-        )
-        src_elapsed = _time.time() - src_t
-        print(f"    -> {sources[name].height:,} rows x {sources[name].width} cols ({src_elapsed:.1f}s)", flush=True)
-
-    # Pre-validate filter fields before building populations
-    filter_errors = []
-    for pop_name, pop_cfg in recipe["populations"].items():
-        src_name = pop_cfg.get("source", "")
-        if src_name not in sources:
-            continue
-        src_cols = set(sources[src_name].columns)
-        for cond in pop_cfg.get("filter", []):
-            if "field" in cond and cond["field"] not in src_cols:
-                available = ", ".join(sorted(src_cols)[:10])
-                filter_errors.append(
-                    f'Population "{pop_name}" filter field "{cond["field"]}" '
-                    f"not found. Available: {available}"
-                )
-    if filter_errors:
-        import sys
-
-        from recipe import RecipeValidationError
-        for e in filter_errors:
-            print(f"[ERROR] {e}", file=sys.stderr)
-        raise RecipeValidationError(
-            f"Recipe has {len(filter_errors)} filter field error(s). Fix recipe config and retry."
-        )
-
-    # Build populations
     populations = {}
-    for pop_name, pop_cfg in recipe["populations"].items():
+    for pop_name, pop_cfg in recipe_pops.items():
         src_name = pop_cfg["source"]
+        if src_name == "_previous_matched":
+            populations[pop_name] = {"config": pop_cfg, "df": None, "source": src_name}
+            continue
         src_df = sources[src_name]
 
         if "filter" in pop_cfg and pop_cfg["filter"]:
             filtered = filter_population(src_df, pop_cfg)
             populations[pop_name] = {"config": pop_cfg, "df": filtered, "source": src_name}
         else:
-            # Remainder: computed after other pops
             populations[pop_name] = {"config": pop_cfg, "df": None, "source": src_name}
 
-    # Compute remainder populations (exclude Pop1 + Garbage from same source)
+    # Compute remainder populations
     for pop_name, pop_data in populations.items():
-        if pop_data["df"] is not None:
+        if pop_data["df"] is not None or pop_data["source"] == "_previous_matched":
             continue
 
         src_df = sources[pop_data["source"]]
@@ -630,8 +600,7 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
             if "filter" in other_cfg and other_cfg["filter"]:
                 remainder = remainder.filter(~build_filter_expr(other_cfg["filter"]))
 
-        # Also exclude garbage populations
-        for garb_name, garb_cfg in recipe["populations"].items():
+        for garb_name, garb_cfg in recipe_pops.items():
             if garb_name == pop_name:
                 continue
             if garb_cfg.get("action") == "exclude" and "filter" in garb_cfg and garb_cfg["filter"]:
@@ -639,91 +608,28 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
 
         pop_data["df"] = remainder
 
-    # Semantic field validation (runs every time, not just dry-run)
-    from recipe import RecipeValidationError, validate_fields
-    val_errors, val_warnings = validate_fields(recipe, sources, populations)
-    for w in val_warnings:
-        import sys
-        print(f"[WARN] {w}", file=sys.stderr)
-    if val_errors:
-        import sys
-        for e in val_errors:
-            print(f"[ERROR] {e}", file=sys.stderr)
-        raise RecipeValidationError(
-            f"Recipe has {len(val_errors)} field error(s). Fix recipe config and retry."
-        )
+    return populations
 
-    timings["load"] = _time.time() - t
-    print("Running matching pipeline...", flush=True)
 
-    t = _time.time()
-    norm_cfg = recipe.get("normalization", {})
-    aliases = None
-    stopwords = None
-    if norm_cfg.get("aliases"):
-        aliases_path = Path(norm_cfg["aliases"])
-        # Try relative to cwd first, then relative to base_dir
-        if not aliases_path.exists():
-            aliases_path = Path(base_dir) / norm_cfg["aliases"]
-        if aliases_path.exists():
-            aliases = json.loads(aliases_path.read_text())
-    if norm_cfg.get("stopwords"):
-        sw_path = Path(norm_cfg["stopwords"])
-        if not sw_path.exists():
-            sw_path = Path(base_dir) / norm_cfg["stopwords"]
-        if sw_path.exists():
-            sw_data = json.loads(sw_path.read_text())
-            # Flatten stopwords if categorized by type (name/address)
-            if isinstance(sw_data, dict):
-                stopwords = [w for words in sw_data.values() for w in words]
-            else:
-                stopwords = sw_data
-
-    timings["setup"] = _time.time() - t
-
-    t = _time.time()
-    match_mode = recipe.get("output", {}).get("match_mode", "best_match")
+def _run_phase_steps(steps, populations, sources,
+                     aliases=None, stopwords=None,
+                     track_field=None, tie_breaker=None,
+                     step_offset=0):
+    """Run matching steps for a single phase. Returns results dict."""
     all_matched = []
     matched_source_keys = set()
-    all_rejections = {}  # track_field_value -> {reason, step, score}
+    all_rejections = {}
 
-    # Determine the unique record identifier for dedup and unmatched tracking.
-    # Uses record_key from the source population config. Falls back to match
-    # field only if record_key is not set (legacy recipes).
-    pop1_name = recipe["steps"][0]["source"]
-    src_match_field = recipe["steps"][0]["match_fields"][0]["source"]
-    pop1_df_check = populations.get(pop1_name, {}).get("df", pl.DataFrame())
-    pop1_cfg = recipe["populations"].get(pop1_name, {})
-    record_key = pop1_cfg.get("record_key")
-    if record_key:
-        if record_key not in pop1_df_check.columns:
-            from recipe import RecipeValidationError
-            raise RecipeValidationError(
-                f'Population "{pop1_name}" record_key "{record_key}" not found '
-                f'in source data. Available: {", ".join(sorted(pop1_df_check.columns)[:10])}'
-            )
-        track_field = record_key
-    else:
-        import sys
-        print(
-            f'[WARN] Population "{pop1_name}" has no record_key. '
-            f"Falling back to match field '{src_match_field}' for dedup -- "
-            "records with duplicate names may be collapsed.",
-            file=sys.stderr,
-        )
-        track_field = src_match_field
-
-    for step_idx, step in enumerate(recipe["steps"]):
+    for step_idx, step in enumerate(steps):
         src_pop = step["source"]
         dst_pop = step["destination"]
 
-        # Detect same-population matching
         if src_pop == dst_pop:
             step = {**step, "_same_pop": True}
             if track_field:
                 import sys
                 print(
-                    f'[INFO] Step {step_idx+1} ("{step.get("name", "?")}") matches '
+                    f'[INFO] Step {step_offset+step_idx+1} ("{step.get("name", "?")}") matches '
                     f'{src_pop} against itself -- self-matches on {track_field} will be excluded.',
                     file=sys.stderr,
                 )
@@ -738,17 +644,15 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
         if dst_df is None or dst_df.height == 0:
             continue
 
-        # Pre-sort destination by tie-breaker so per-step dedup picks the right winner
-        tie_breaker = recipe.get("output", {}).get("tie_breaker")
         if tie_breaker:
             tb_col = tie_breaker["column"]
             if tb_col in dst_df.columns:
                 dst_df = _presort_by_tie_breaker(dst_df, tie_breaker, tb_col)
 
         step_result = run_matching_step(src_df, dst_df, step,
-                                           aliases=aliases, stopwords=stopwords,
-                                           dedup_field=track_field,
-                                           collect_rejections=True)
+                                        aliases=aliases, stopwords=stopwords,
+                                        dedup_field=track_field,
+                                        collect_rejections=True)
         matched, rejections = step_result
 
         if "street_mismatch" in rejections:
@@ -770,73 +674,76 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
                     }
 
         if matched.height > 0:
-            # Tag step order for multi-match resolution
-            matched = matched.with_columns(pl.lit(step_idx).alias("_step_order"))
-            all_matched.append(matched)
-
-            if track_field in matched.columns:
-                matched_source_keys.update(matched[track_field].cast(pl.String).to_list())
-
-    timings["match"] = _time.time() - t
-
-    t = _time.time()
-    if all_matched:
-        combined = pl.concat(all_matched, how="diagonal")
-
-        if match_mode == "best_match":
-            # Sort: prefer earlier step, then higher name score, then higher address score
-            sort_cols = ["_step_order"]
-            sort_desc = [False]
-            if "name_score" in combined.columns:
-                sort_cols.append("name_score")
-                sort_desc.append(True)
-            if "addr_score" in combined.columns:
-                sort_cols.append("addr_score")
-                sort_desc.append(True)
-
-            # Tie-breaker: secondary sort after score columns.
-            # NOTE: Per-step dedup already picks the tie-breaker winner via
-            # pre-sorted dest ordering. This cross-step sort is a safety net
-            # in case future changes alter per-step dedup behavior.
-            tie_breaker = recipe.get("output", {}).get("tie_breaker")
-            if tie_breaker:
-                tb_col = tie_breaker["column"]
-                tb_dst = tb_col + "_dst" if tb_col + "_dst" in combined.columns else tb_col
-                if tb_dst in combined.columns:
-                    tb_order = tie_breaker.get("order", "asc")
-                    combined = combined.with_columns(
-                        _tb_sort_key_expr(tb_dst, tie_breaker)
-                    )
-                    sort_cols.append("_tb_sort_key")
-                    sort_desc.append(tb_order == "desc")
-
-            combined = combined.sort(sort_cols, descending=sort_desc)
-            combined = combined.unique(subset=[track_field], keep="first")
-
-        # Exact matches get name_score=100 (fuzzy steps already have scores)
-        if "name_score" in combined.columns:
-            combined = combined.with_columns(
-                pl.col("name_score").fill_null(100.0).alias("name_score")
+            matched = matched.with_columns(
+                pl.lit(step_offset + step_idx).alias("_step_order")
             )
+            all_matched.append(matched)
+            if track_field in matched.columns:
+                matched_source_keys.update(
+                    matched[track_field].cast(pl.String).to_list()
+                )
 
-        combined = combined.drop([c for c in combined.columns if c.startswith("_")])
-    else:
-        combined = pl.DataFrame()
+    return {
+        "all_matched": all_matched,
+        "matched_source_keys": matched_source_keys,
+        "all_rejections": all_rejections,
+    }
 
-    # Unmatched
-    pop1_name = recipe["steps"][0]["source"]
-    pop1_df = populations.get(pop1_name, {}).get("df", pl.DataFrame())
-    recipe["steps"][0]["match_fields"][0]["source"]
 
+def _resolve_matches(all_matched, track_field, match_mode, tie_breaker=None):
+    """Resolve multi-step matches into a single best-match DataFrame."""
+    if not all_matched:
+        return pl.DataFrame()
+
+    combined = pl.concat(all_matched, how="diagonal")
+
+    if match_mode == "best_match":
+        sort_cols = ["_step_order"]
+        sort_desc = [False]
+        if "name_score" in combined.columns:
+            sort_cols.append("name_score")
+            sort_desc.append(True)
+        if "addr_score" in combined.columns:
+            sort_cols.append("addr_score")
+            sort_desc.append(True)
+
+        if tie_breaker:
+            tb_col = tie_breaker["column"]
+            tb_dst = tb_col + "_dst" if tb_col + "_dst" in combined.columns else tb_col
+            if tb_dst in combined.columns:
+                tb_order = tie_breaker.get("order", "asc")
+                combined = combined.with_columns(
+                    _tb_sort_key_expr(tb_dst, tie_breaker)
+                )
+                sort_cols.append("_tb_sort_key")
+                sort_desc.append(tb_order == "desc")
+
+        combined = combined.sort(sort_cols, descending=sort_desc)
+        combined = combined.unique(subset=[track_field], keep="first")
+
+    if "name_score" in combined.columns:
+        combined = combined.with_columns(
+            pl.col("name_score").fill_null(100.0).alias("name_score")
+        )
+
+    combined = combined.drop([c for c in combined.columns if c.startswith("_")])
+    return combined
+
+
+def _build_unmatched(pop1_df, matched_source_keys, track_field, all_rejections):
+    """Build unmatched DataFrame with reason codes."""
     if pop1_df.height > 0 and track_field in pop1_df.columns:
-        unmatched = pop1_df.filter(~pl.col(track_field).is_in(list(matched_source_keys)))
+        unmatched = pop1_df.filter(
+            ~pl.col(track_field).is_in(list(matched_source_keys))
+        )
     else:
         unmatched = pl.DataFrame()
 
     if unmatched.height > 0 and track_field in unmatched.columns and all_rejections:
         rej_df = pl.DataFrame([
             {track_field: k, "reason_code": v["reason"],
-             "rejection_step": v["step"], "best_rejected_score": v.get("best_addr_score")}
+             "rejection_step": v["step"],
+             "best_rejected_score": v.get("best_addr_score")}
             for k, v in all_rejections.items()
         ])
         unmatched = unmatched.join(rej_df, on=track_field, how="left")
@@ -850,6 +757,185 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
             pl.lit(None).cast(pl.Float64).alias("best_rejected_score"),
         )
 
+    return unmatched
+
+
+def _load_normalization(norm_cfg, base_dir):
+    """Load aliases and stopwords from normalization config."""
+    aliases = None
+    stopwords = None
+    if norm_cfg.get("aliases"):
+        aliases_path = Path(norm_cfg["aliases"])
+        if not aliases_path.exists():
+            aliases_path = Path(base_dir) / norm_cfg["aliases"]
+        if aliases_path.exists():
+            aliases = json.loads(aliases_path.read_text())
+    if norm_cfg.get("stopwords"):
+        sw_path = Path(norm_cfg["stopwords"])
+        if not sw_path.exists():
+            sw_path = Path(base_dir) / norm_cfg["stopwords"]
+        if sw_path.exists():
+            sw_data = json.loads(sw_path.read_text())
+            if isinstance(sw_data, dict):
+                stopwords = [w for words in sw_data.values() for w in words]
+            else:
+                stopwords = sw_data
+    return aliases, stopwords
+
+
+def _resolve_track_field(steps, populations):
+    """Determine the tracking field for dedup and unmatched detection."""
+    pop1_name = steps[0]["source"]
+    src_match_field = steps[0]["match_fields"][0]["source"]
+    pop1_df = populations.get(pop1_name, {}).get("df", pl.DataFrame())
+    pop1_cfg = populations.get(pop1_name, {}).get("config", {})
+    record_key = pop1_cfg.get("record_key")
+    if record_key:
+        if record_key not in pop1_df.columns:
+            from recipe import RecipeValidationError
+            raise RecipeValidationError(
+                f'Population "{pop1_name}" record_key "{record_key}" not found '
+                f'in source data. Available: {", ".join(sorted(pop1_df.columns)[:10])}'
+            )
+        return record_key
+    else:
+        import sys
+        print(
+            f'[WARN] Population "{pop1_name}" has no record_key. '
+            f"Falling back to match field '{src_match_field}' for dedup -- "
+            "records with duplicate names may be collapsed.",
+            file=sys.stderr,
+        )
+        return src_match_field
+
+
+# ---------------------------------------------------------------------------
+# Full pipeline
+# ---------------------------------------------------------------------------
+
+def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
+    """Run the complete matching pipeline from a recipe.
+
+    Supports single-phase (classic) and multi-phase recipes.
+    Multi-phase recipes use a ``phases`` key with per-phase
+    populations and steps. Each phase can reference
+    ``_previous_matched`` as a population source.
+
+    Returns:
+        dict with keys:
+        - matched: pl.DataFrame of matched records
+        - unmatched: pl.DataFrame of unmatched records with reason codes
+        - populations: dict of {name: DataFrame} for each population
+        - stats: {total_source, matched_count, unmatched_count}
+        - timing: {load, setup, match, resolve} in seconds
+        - phases: list of per-phase stats (multi-phase only)
+    """
+    import time as _time
+
+    from recipe import load_source
+    timings = {}
+
+    # Expand step_defaults if not already done (e.g. dict passed directly)
+    if "step_defaults" in recipe:
+        from recipe import _apply_step_defaults
+        recipe = _apply_step_defaults(recipe)
+
+    t = _time.time()
+    sources = {}
+    for name, cfg in recipe["sources"].items():
+        loader_type = cfg.get("loader", "file")
+        src_t = _time.time()
+        print(f"  Loading source '{name}' ({loader_type})...", flush=True)
+        sources[name] = load_source(
+            cfg, base_dir,
+            recipe_name=recipe.get("name", ""),
+            source_name=name,
+        )
+        src_elapsed = _time.time() - src_t
+        print(f"    -> {sources[name].height:,} rows x {sources[name].width} cols ({src_elapsed:.1f}s)", flush=True)
+
+    print("Running matching pipeline...", flush=True)
+
+    norm_cfg = recipe.get("normalization", {})
+    aliases, stopwords = _load_normalization(norm_cfg, base_dir)
+    timings["load"] = _time.time() - t
+
+    if "phases" in recipe:
+        return _run_multi_phase(recipe, sources, aliases, stopwords, timings)
+    else:
+        return _run_single_phase(recipe, sources, aliases, stopwords, timings)
+
+
+def _run_single_phase(recipe, sources, aliases, stopwords, timings):
+    """Run a classic single-phase pipeline (backward compatible)."""
+    import time as _time
+
+    from recipe import RecipeValidationError, validate_fields
+
+    t = _time.time()
+
+    # Validate filter fields
+    filter_errors = []
+    for pop_name, pop_cfg in recipe["populations"].items():
+        src_name = pop_cfg.get("source", "")
+        if src_name not in sources:
+            continue
+        src_cols = set(sources[src_name].columns)
+        for cond in pop_cfg.get("filter", []):
+            if "field" in cond and cond["field"] not in src_cols:
+                available = ", ".join(sorted(src_cols)[:10])
+                filter_errors.append(
+                    f'Population "{pop_name}" filter field "{cond["field"]}" '
+                    f"not found. Available: {available}"
+                )
+    if filter_errors:
+        import sys
+        for e in filter_errors:
+            print(f"[ERROR] {e}", file=sys.stderr)
+        raise RecipeValidationError(
+            f"Recipe has {len(filter_errors)} filter field error(s). Fix recipe config and retry."
+        )
+
+    populations = _build_populations(recipe["populations"], sources)
+
+    # Semantic field validation
+    val_errors, val_warnings = validate_fields(recipe, sources, populations)
+    for w in val_warnings:
+        import sys
+        print(f"[WARN] {w}", file=sys.stderr)
+    if val_errors:
+        import sys
+        for e in val_errors:
+            print(f"[ERROR] {e}", file=sys.stderr)
+        raise RecipeValidationError(
+            f"Recipe has {len(val_errors)} field error(s). Fix recipe config and retry."
+        )
+
+    timings["load"] = timings.get("load", 0) + (_time.time() - t)
+
+    t = _time.time()
+    match_mode = recipe.get("output", {}).get("match_mode", "best_match")
+    tie_breaker = recipe.get("output", {}).get("tie_breaker")
+    track_field = _resolve_track_field(recipe["steps"], populations)
+
+    phase_result = _run_phase_steps(
+        recipe["steps"], populations, sources,
+        aliases=aliases, stopwords=stopwords,
+        track_field=track_field, tie_breaker=tie_breaker,
+    )
+    timings["match"] = _time.time() - t
+
+    t = _time.time()
+    combined = _resolve_matches(
+        phase_result["all_matched"], track_field, match_mode, tie_breaker
+    )
+
+    pop1_name = recipe["steps"][0]["source"]
+    pop1_df = populations.get(pop1_name, {}).get("df", pl.DataFrame())
+    unmatched = _build_unmatched(
+        pop1_df, phase_result["matched_source_keys"],
+        track_field, phase_result["all_rejections"]
+    )
     timings["resolve"] = _time.time() - t
 
     return {
@@ -862,4 +948,198 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
             "unmatched_count": unmatched.height,
         },
         "timing": timings,
+    }
+
+
+def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
+    """Run a multi-phase pipeline.
+
+    Each phase has its own populations and steps. Phases execute
+    sequentially. A phase can reference ``_previous_matched`` as
+    a population source to chain phase outputs.
+    """
+    import sys
+    import time as _time
+
+    match_mode = recipe.get("output", {}).get("match_mode", "best_match")
+    tie_breaker = recipe.get("output", {}).get("tie_breaker")
+    phases = recipe["phases"]
+    phase_stats = []
+    previous_matched = None
+    step_offset = 0
+    total_match_time = 0
+
+    first_phase_pop1_df = None
+    first_phase_track_field = None
+    first_phase_matched = None  # Store Phase 1 output for partial-match recovery
+    cumulative_matched_keys = set()
+    cumulative_rejections = {}
+
+    for phase_idx, phase in enumerate(phases):
+        t = _time.time()
+        phase_name = phase.get("name", f"Phase {phase_idx + 1}")
+        print(f"[PHASE {phase_idx + 1}] {phase_name}", file=sys.stderr)
+
+        phase_pops_cfg = phase.get("populations", {})
+        populations = _build_populations(phase_pops_cfg, sources)
+
+        # Inject _previous_matched
+        for pop_name, pop_data in populations.items():
+            if pop_data["source"] == "_previous_matched":
+                if previous_matched is None or previous_matched.height == 0:
+                    print(
+                        f'[WARN] Phase {phase_idx + 1} population "{pop_name}" '
+                        f"references _previous_matched but no matches from prior phase.",
+                        file=sys.stderr,
+                    )
+                    pop_data["df"] = pl.DataFrame()
+                else:
+                    pop_data["df"] = previous_matched
+
+        phase_steps = phase.get("steps", [])
+        if not phase_steps:
+            print(f"[WARN] Phase {phase_idx + 1} has no steps, skipping.",
+                  file=sys.stderr)
+            continue
+
+        # Check if all source populations are empty (e.g. _previous_matched with no data)
+        pop1_name = phase_steps[0]["source"]
+        pop1_df_check = populations.get(pop1_name, {}).get("df", pl.DataFrame())
+        if pop1_df_check.height == 0:
+            print("  Input: 0 | Matched: 0 | Skipped (empty source)",
+                  file=sys.stderr)
+            phase_stats.append({
+                "name": phase_name,
+                "matched_count": 0,
+                "input_count": 0,
+                "time": _time.time() - t,
+            })
+            previous_matched = pl.DataFrame()
+            step_offset += len(phase_steps)
+            continue
+
+        # Validate fields for this phase
+        from recipe import validate_fields
+        mini_recipe = {
+            "steps": phase_steps,
+            "populations": phase_pops_cfg,
+        }
+        val_errors, val_warnings = validate_fields(mini_recipe, sources, populations)
+        for w in val_warnings:
+            print(f"[WARN] Phase {phase_idx + 1}: {w}", file=sys.stderr)
+        if val_errors:
+            from recipe import RecipeValidationError
+            for e in val_errors:
+                print(f"[ERROR] Phase {phase_idx + 1}: {e}", file=sys.stderr)
+            raise RecipeValidationError(
+                f"Phase {phase_idx + 1} has {len(val_errors)} field error(s)."
+            )
+
+        track_field = _resolve_track_field(phase_steps, populations)
+
+        if phase_idx == 0:
+            pop1_name = phase_steps[0]["source"]
+            first_phase_pop1_df = populations.get(pop1_name, {}).get(
+                "df", pl.DataFrame()
+            )
+            first_phase_track_field = track_field
+
+        phase_result = _run_phase_steps(
+            phase_steps, populations, sources,
+            aliases=aliases, stopwords=stopwords,
+            track_field=track_field, tie_breaker=tie_breaker,
+            step_offset=step_offset,
+        )
+
+        phase_time = _time.time() - t
+        total_match_time += phase_time
+
+        phase_matched = _resolve_matches(
+            phase_result["all_matched"], track_field, match_mode, tie_breaker
+        )
+
+        pop1_name = phase_steps[0]["source"]
+        input_count = populations.get(pop1_name, {}).get(
+            "df", pl.DataFrame()
+        ).height
+
+        phase_stats.append({
+            "name": phase_name,
+            "matched_count": phase_matched.height,
+            "input_count": input_count,
+            "time": phase_time,
+        })
+
+        print(
+            f"  Input: {input_count} | Matched: {phase_matched.height} | Time: {phase_time:.2f}s",
+            file=sys.stderr,
+        )
+
+        if phase_matched.height > 0:
+            if first_phase_track_field and first_phase_track_field in phase_matched.columns:
+                cumulative_matched_keys.update(
+                    phase_matched[first_phase_track_field].cast(pl.String).to_list()
+                )
+            # Capture first phase matched for partial-match recovery
+            if phase_idx == 0:
+                first_phase_matched = phase_matched
+
+        cumulative_rejections.update(phase_result["all_rejections"])
+        previous_matched = phase_matched
+        step_offset += len(phase_steps)
+
+    timings["match"] = total_match_time
+
+    t = _time.time()
+    # Final output: last phase's matched + partial matches from earlier phases.
+    # Partial matches are records that matched Phase 1 but dropped in later
+    # phases (e.g. no parent relationship found). They appear in the matched
+    # output with null columns for the phases they missed.
+    combined = previous_matched if previous_matched is not None else pl.DataFrame()
+
+    if (
+        first_phase_matched is not None
+        and combined.height > 0
+        and first_phase_track_field
+        and first_phase_track_field in first_phase_matched.columns
+        and first_phase_track_field in combined.columns
+    ):
+        final_keys = set(combined[first_phase_track_field].cast(pl.String).to_list())
+        phase1_keys = set(
+            first_phase_matched[first_phase_track_field].cast(pl.String).to_list()
+        )
+        partial_keys = phase1_keys - final_keys
+        if partial_keys:
+            partial_df = first_phase_matched.filter(
+                pl.col(first_phase_track_field).cast(pl.String).is_in(partial_keys)
+            )
+            # Align columns -- add missing columns as null
+            for col in combined.columns:
+                if col not in partial_df.columns:
+                    partial_df = partial_df.with_columns(
+                        pl.lit(None).cast(pl.String).alias(col)
+                    )
+            # Select same columns in same order
+            partial_df = partial_df.select(combined.columns)
+            combined = pl.concat([combined, partial_df], how="vertical_relaxed")
+
+    track_field = first_phase_track_field or "_unknown"
+    pop1_df = first_phase_pop1_df if first_phase_pop1_df is not None else pl.DataFrame()
+    unmatched = _build_unmatched(
+        pop1_df, cumulative_matched_keys, track_field, cumulative_rejections
+    )
+    timings["resolve"] = _time.time() - t
+
+    return {
+        "matched": combined,
+        "unmatched": unmatched,
+        "populations": {},
+        "stats": {
+            "total_source": pop1_df.height,
+            "matched_count": combined.height,
+            "unmatched_count": unmatched.height,
+            "phases": phase_stats,
+        },
+        "timing": timings,
+        "phases": phase_stats,
     }

@@ -9,6 +9,31 @@ actually happened). Output as markdown string or Excel "Summary" tab.
 import polars as pl
 
 
+def _get_all_steps(recipe: dict) -> list:
+    """Extract all steps from a recipe, handling both single and multi-phase."""
+    if "steps" in recipe and recipe["steps"]:
+        return recipe["steps"]
+    if "phases" in recipe:
+        all_steps = []
+        for phase in recipe["phases"]:
+            for step in phase.get("steps", []):
+                all_steps.append(step)
+        return all_steps
+    return []
+
+
+def _get_all_populations(recipe: dict) -> dict:
+    """Extract all population configs, handling both single and multi-phase."""
+    if "populations" in recipe:
+        return recipe["populations"]
+    if "phases" in recipe:
+        all_pops = {}
+        for phase in recipe["phases"]:
+            all_pops.update(phase.get("populations", {}))
+        return all_pops
+    return {}
+
+
 def _describe_filters(pop_cfg: dict) -> str:
     """Describe population filters in plain English."""
     filters = pop_cfg.get("filter", [])
@@ -159,11 +184,11 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
     lines.append("")
 
     # --- Populations ---
-    step_sources = {step["source"] for step in recipe.get("steps", [])}
-    step_dests = {step["destination"] for step in recipe.get("steps", [])}
+    step_sources = {step["source"] for step in _get_all_steps(recipe)}
+    step_dests = {step["destination"] for step in _get_all_steps(recipe)}
 
     lines.append("**Populations:**")
-    for pop_name, pop_cfg in recipe.get("populations", {}).items():
+    for pop_name, pop_cfg in _get_all_populations(recipe).items():
         src_name = pop_cfg.get("source", "")
         source_file = ""
         if src_name and src_name in recipe.get("sources", {}):
@@ -192,23 +217,71 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
     # --- Step table ---
     lines.append("**Matching steps (in priority order):**")
     lines.append("")
-    lines.append("| Step | Source Pop | Source Column | Dest Pop | Dest Column | Method | Data Tier | Name Threshold | Address Threshold | Address Tier | Date Filter | Other Conditions | Matched | % of Total | Leftover |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 
-    cumulative = 0
-    for i, step in enumerate(recipe.get("steps", []), 1):
-        count = step_counts.get(step.get("name", ""), 0)
-        cumulative += count
-        remaining = total - cumulative
-        info = _describe_step_enhanced(step, i, count, matched, total, cumulative)
-        pct_of_total = round(count / total * 100, 1) if total > 0 else 0.0
-        lines.append(
-            f"| {info['step']} | {info['source_pop']} | {info['source_col']} "
-            f"| {info['dest_pop']} | {info['dest_col']} | {info['method']} "
-            f"| {info['data_tier']} | {info['name_threshold']} | {info['addr_threshold']} "
-            f"| {info['addr_tier']} | {info['date_filter']} | {info['other_conditions']} "
-            f"| {info['matched']} | {pct_of_total}% | {remaining} |"
-        )
+    step_header = ("| Step | Source Pop | Source Column | Dest Pop | Dest Column "
+                   "| Method | Data Tier | Name Threshold | Address Threshold "
+                   "| Address Tier | Date Filter | Other Conditions "
+                   "| Matched | % of Total | Leftover |")
+    step_sep = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+
+    phases = recipe.get("phases", [])
+    phase_stats_list = stats.get("phases", []) if stats else []
+
+    if phases:
+        # Multi-phase: group steps by phase with phase headers
+        step_num = 0
+        for phase_idx, phase in enumerate(phases):
+            phase_name = phase.get("name", f"Phase {phase_idx + 1}")
+            ps = phase_stats_list[phase_idx] if phase_idx < len(phase_stats_list) else {}
+            phase_input = ps.get("input_count", "?")
+            phase_matched_count = ps.get("matched_count", "?")
+            lines.append(f"**{phase_name}** (Input: {phase_input} | Matched: {phase_matched_count})")
+            lines.append("")
+            lines.append(step_header)
+            lines.append(step_sep)
+
+            phase_cumulative = 0
+            phase_total = ps.get("input_count", total)
+            for step in phase.get("steps", []):
+                step_num += 1
+                count = step_counts.get(step.get("name", ""), 0)
+                phase_cumulative += count
+                remaining = phase_total - phase_cumulative
+                info = _describe_step_enhanced(
+                    step, step_num, count, matched, phase_total, phase_cumulative
+                )
+                pct = round(count / phase_total * 100, 1) if phase_total > 0 else 0.0
+                lines.append(
+                    f"| {info['step']} | {info['source_pop']} | {info['source_col']} "
+                    f"| {info['dest_pop']} | {info['dest_col']} | {info['method']} "
+                    f"| {info['data_tier']} | {info['name_threshold']} "
+                    f"| {info['addr_threshold']} "
+                    f"| {info['addr_tier']} | {info['date_filter']} "
+                    f"| {info['other_conditions']} "
+                    f"| {info['matched']} | {pct}% | {remaining} |"
+                )
+            lines.append("")
+    else:
+        # Single-phase: flat step list
+        lines.append(step_header)
+        lines.append(step_sep)
+
+        cumulative = 0
+        for i, step in enumerate(_get_all_steps(recipe), 1):
+            count = step_counts.get(step.get("name", ""), 0)
+            cumulative += count
+            remaining = total - cumulative
+            info = _describe_step_enhanced(step, i, count, matched, total, cumulative)
+            pct_of_total = round(count / total * 100, 1) if total > 0 else 0.0
+            lines.append(
+                f"| {info['step']} | {info['source_pop']} | {info['source_col']} "
+                f"| {info['dest_pop']} | {info['dest_col']} | {info['method']} "
+                f"| {info['data_tier']} | {info['name_threshold']} "
+                f"| {info['addr_threshold']} "
+                f"| {info['addr_tier']} | {info['date_filter']} "
+                f"| {info['other_conditions']} "
+                f"| {info['matched']} | {pct_of_total}% | {remaining} |"
+            )
 
     lines.append("")
     lines.append(
@@ -256,7 +329,7 @@ def generate_mermaid(recipe: dict, stats: dict, matched_df: pl.DataFrame | None 
         for row in matched_df.group_by("match_step").len().iter_rows():
             step_counts[row[0]] = row[1]
 
-    steps = recipe.get("steps", [])
+    steps = _get_all_steps(recipe)
     if not steps:
         return ""
 
@@ -374,8 +447,8 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
             step_counts[row[0]] = row[1]
 
     # Determine population roles
-    step_sources = {step["source"] for step in recipe.get("steps", [])}
-    step_dests = {step["destination"] for step in recipe.get("steps", [])}
+    step_sources = {step["source"] for step in _get_all_steps(recipe)}
+    step_dests = {step["destination"] for step in _get_all_steps(recipe)}
 
     row = 1
 
@@ -394,7 +467,7 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
     # Populations
     ws.cell(row=row, column=1, value="Populations:").font = Font(bold=True)
     row += 1
-    for pop_name, pop_cfg in recipe.get("populations", {}).items():
+    for pop_name, pop_cfg in _get_all_populations(recipe).items():
         src_name = pop_cfg.get("source", "")
         source_file = ""
         if src_name and src_name in recipe.get("sources", {}):
@@ -440,29 +513,81 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
         "Address Tier", "Date Filter", "Other Conditions",
         "Matched", "% of Total", "Leftover",
     ]
-    for ci, h in enumerate(headers, 1):
-        cell = ws.cell(row=row, column=ci, value=h)
-        cell.font = header_font_white
-        cell.fill = header_fill
-    row += 1
 
-    cumulative = 0
-    for i, step in enumerate(recipe.get("steps", []), 1):
-        count = step_counts.get(step.get("name", ""), 0)
-        cumulative += count
-        remaining = total - cumulative
-        info = _describe_step_enhanced(step, i, count, matched, total, cumulative)
-        pct_of_total = f"{round(count / total * 100, 1)}%" if total > 0 else "0.0%"
-        values = [
-            info["step"], info["source_pop"], info["source_col"],
-            info["dest_pop"], info["dest_col"], info["method"],
-            info["data_tier"], info["name_threshold"], info["addr_threshold"],
-            info["addr_tier"], info["date_filter"], info["other_conditions"],
-            info["matched"], pct_of_total, remaining,
-        ]
-        for ci, v in enumerate(values, 1):
-            ws.cell(row=row, column=ci, value=v)
+    phases = recipe.get("phases", [])
+    phase_stats_list = stats.get("phases", []) if stats else []
+
+    if phases:
+        # Multi-phase: group steps by phase
+        step_num = 0
+        for phase_idx, phase in enumerate(phases):
+            phase_name = phase.get("name", f"Phase {phase_idx + 1}")
+            ps = phase_stats_list[phase_idx] if phase_idx < len(phase_stats_list) else {}
+            phase_input = ps.get("input_count", "?")
+            phase_matched_count = ps.get("matched_count", "?")
+
+            # Phase header row
+            phase_cell = ws.cell(
+                row=row, column=1,
+                value=f"{phase_name} (Input: {phase_input} | Matched: {phase_matched_count})"
+            )
+            phase_cell.font = Font(bold=True)
+            row += 1
+
+            # Column headers
+            for ci, h in enumerate(headers, 1):
+                cell = ws.cell(row=row, column=ci, value=h)
+                cell.font = header_font_white
+                cell.fill = header_fill
+            row += 1
+
+            phase_cumulative = 0
+            phase_total = ps.get("input_count", total)
+            for step in phase.get("steps", []):
+                step_num += 1
+                count = step_counts.get(step.get("name", ""), 0)
+                phase_cumulative += count
+                remaining = phase_total - phase_cumulative
+                info = _describe_step_enhanced(
+                    step, step_num, count, matched, phase_total, phase_cumulative
+                )
+                pct = f"{round(count / phase_total * 100, 1)}%" if phase_total > 0 else "0.0%"
+                values = [
+                    info["step"], info["source_pop"], info["source_col"],
+                    info["dest_pop"], info["dest_col"], info["method"],
+                    info["data_tier"], info["name_threshold"], info["addr_threshold"],
+                    info["addr_tier"], info["date_filter"], info["other_conditions"],
+                    info["matched"], pct, remaining,
+                ]
+                for ci, v in enumerate(values, 1):
+                    ws.cell(row=row, column=ci, value=v)
+                row += 1
+            row += 1
+    else:
+        # Single-phase: flat step list
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=ci, value=h)
+            cell.font = header_font_white
+            cell.fill = header_fill
         row += 1
+
+        cumulative = 0
+        for i, step in enumerate(_get_all_steps(recipe), 1):
+            count = step_counts.get(step.get("name", ""), 0)
+            cumulative += count
+            remaining = total - cumulative
+            info = _describe_step_enhanced(step, i, count, matched, total, cumulative)
+            pct_of_total = f"{round(count / total * 100, 1)}%" if total > 0 else "0.0%"
+            values = [
+                info["step"], info["source_pop"], info["source_col"],
+                info["dest_pop"], info["dest_col"], info["method"],
+                info["data_tier"], info["name_threshold"], info["addr_threshold"],
+                info["addr_tier"], info["date_filter"], info["other_conditions"],
+                info["matched"], pct_of_total, remaining,
+            ]
+            for ci, v in enumerate(values, 1):
+                ws.cell(row=row, column=ci, value=v)
+            row += 1
 
     row += 1
     note = ws.cell(

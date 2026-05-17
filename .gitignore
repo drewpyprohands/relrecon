@@ -6,6 +6,7 @@ tests/results/*
 reviews/
 output/
 data/*gleif*
+!data/gleif_test_vendors.csv
 
 # Loader cache
 .cache/

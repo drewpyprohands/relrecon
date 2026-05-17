@@ -6,11 +6,13 @@
   "required": [
     "name",
     "sources",
-    "populations",
-    "steps",
     "output"
   ],
   "additionalProperties": false,
+  "oneOf": [
+    {"required": ["populations", "steps"]},
+    {"required": ["phases"]}
+  ],
   "properties": {
     "name": {
       "type": "string",
@@ -571,6 +573,58 @@
               ],
               "default": "skip"
             }
+          }
+        }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "description": "Multi-phase pipeline. Each phase has its own populations and steps. Use _previous_matched as a source to chain phase outputs.",
+      "items": {
+        "type": "object",
+        "required": ["name", "populations", "steps"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable phase name"
+          },
+          "populations": {
+            "type": "object",
+            "description": "Per-phase populations. Use _previous_matched as source to reference prior phase output.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string"
+                },
+                "record_key": {
+                  "type": "string"
+                },
+                "filter": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/filter_condition"
+                  }
+                },
+                "action": {
+                  "type": "string",
+                  "enum": ["include", "exclude"]
+                }
+              }
+            }
+          },
+          "steps": {
+            "type": "array",
+            "description": "Phase matching steps (same schema as top-level steps)",
+            "items": {
+              "type": "object"
+            }
+          },
+          "step_defaults": {
+            "type": "object",
+            "description": "Per-phase step defaults (overrides top-level step_defaults)",
+            "additionalProperties": true
           }
         }
       }

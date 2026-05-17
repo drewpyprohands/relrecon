@@ -1,5 +1,17 @@
-name: L1 Reconc Rollup 80 All
-description: Reconcile Pop1 parent IDs to trusted L1 records (using step_defaults)
+# Step Defaults Example
+#
+# Demonstrates the step_defaults feature: define address_support and
+# inherit blocks once at the top level instead of repeating them in
+# every step. Steps inherit these defaults unless they provide a local
+# override (see Step 5 -- core_parent has different column names).
+#
+# Compare with l1_recon_80.yaml which uses the same matching logic
+# but repeats address_support/inherit in every step.
+
+name: L1 Reconc Rollup 80 (step_defaults)
+description: >-
+  Reconcile Pop1 parent IDs to trusted L1 records.
+  Same as l1_recon_80 but uses step_defaults to reduce repetition.
 
 sources:
   core_parent:
