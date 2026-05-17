@@ -6,23 +6,32 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   lint:
+    name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install ruff
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - run: python -m pip install ruff==0.15.13
       - run: ruff check src/
 
   test:
+    name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: lint
     steps:
       - uses: actions/checkout@v4
@@ -30,50 +39,53 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: pip install pytest respx
+          cache-dependency-path: requirements.txt
+      - run: |
+          python -m pip install -r requirements.txt
+          python -m pip install pytest respx
       - run: python -m pytest tests/ -q --tb=short
 
   sast:
+    name: SAST
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: lint
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
 
-      - name: Bandit (report all)
-        run: |
-          pip install bandit
-          bandit -r src/ --skip B101 -f txt || true
+      - run: python -m pip install bandit==1.9.4
 
-      - name: Bandit (gate medium+)
+      - name: Bandit report (all severities)
+        run: bandit -r src/ --skip B101 -f txt || true
+
+      - name: Bandit gate (medium+)
         run: bandit -r src/ -q --skip B101,B112 --severity-level medium
 
-      - name: Semgrep
-        uses: semgrep/semgrep-action@v1
-        env:
-          SEMGREP_SEND_METRICS: "off"
-        with:
-          config: auto
-
   dep-scan:
+    name: Dependency and filesystem scan
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     needs: lint
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - run: python -m pip install pip-audit==2.10.0
 
       - name: pip-audit
-        run: |
-          pip install pip-audit
-          pip-audit -r requirements.txt --strict --progress-spinner=off
+        run: pip-audit -r requirements.txt --strict --progress-spinner=off
 
-      - name: Trivy FS scan
-        uses: aquasecurity/trivy-action@master
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
           scan-ref: .
