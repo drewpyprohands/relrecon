@@ -224,17 +224,21 @@ steps:
 > [!NOTE]
 > When a step defines `inherit`, it completely replaces any `inherit` from step_defaults. This is by design -- lists don't merge because the order and content matter. Use `inherit` in step_defaults only when all steps inherit the same columns. Otherwise, define it per step as shown in Example 2.
 
-See `config/recipes/recipe_before_globaldefaults.yaml` and `config/recipes/recipe_after_globaldefaults.yaml` for a full before/after comparison (265 lines vs 196 lines, step config 140 vs 45 lines).
+See `config/recipes/step_defaults_example.yaml` for a compact example using step_defaults. Compare with `l1_recon_80.yaml` (explicit per-step) to see the verbosity difference.
 
 ## Output Report
 
-Excel workbook with three tabs:
+With `summary: [md, xlsx]` (configured in the recipe's `output` block), the pipeline produces:
+
+**Excel report** (`_report.xlsx` or the main `.xlsx` when format is also xlsx) with three tabs:
 
 - **Summary**: recipe config, population descriptions, per-step match counts, cascade explanation, pipeline timing
 - **Matched**: source/destination L3 names (side-by-side), derived L1 ID + Name, match source, match tier, address scores with source and destination addresses and `tpty_assm_nm` for review
 - **Analysis**: unmatched Pop1 records with reason codes for human review
 
-A markdown summary (`_summary.md`) is also generated alongside the Excel file with the same information plus a Mermaid cascade diagram.
+**Markdown summary** (`_summary.md`) with the same information plus a Mermaid cascade diagram.
+
+The `summary` key must be explicit. Without it, only raw data is produced (no report tabs, no markdown). See ADR-003 for details.
 
 The output section also supports a `tie_breaker` config for selecting among duplicate destination matches and same-population matching (where source == destination). See [How Scoring Works](how-scoring-works.md#tie-breaker-outputtie_breaker) for details.
 

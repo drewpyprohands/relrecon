@@ -490,3 +490,5 @@ flowchart TD
 5. **Variant columns handle cross-step column naming.** When Step 1 matches to core_parent (column `Vendor Name`) and Step 2 matches to Pop3 (column `l3_fmly_nm_dst`), coalescing picks the right value for the "Dest L3 Name" report column.
 
 6. **Address field count is configurable.** The `address_support.source` and `address_support.destination` lists in the recipe control how many address columns are compared. The code generates merged + N×M individual comparisons dynamically. Source and dest can have different field counts (asymmetric comparison).
+
+7. **Multi-phase pipelines chain phases sequentially.** This document describes a single-phase recipe. Multi-phase recipes (`phases:` key) run multiple matching passes where each phase can consume the prior phase's output via `_previous_matched`. See `docs/multi-phase-recipes.md` for details.
