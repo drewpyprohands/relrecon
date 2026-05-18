@@ -160,6 +160,7 @@ output:
   format: xlsx
   path: output/l1_reconciliation_report.xlsx
   match_mode: best_match
+  summary: [md, xlsx]
   tabs:
     - name: Matched
       type: matched_records

@@ -232,15 +232,15 @@ def _build_columns_from_recipe(recipe_columns: list, df: pl.DataFrame) -> list:
     return resolved
 
 
-def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame,
-                    output_path: str, stats: Optional[dict] = None,
+def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None = None,
+                    output_path: str = "", stats: Optional[dict] = None,
                     recipe: Optional[dict] = None,
                     recipe_file: str | None = None) -> str:
     """Generate the Excel report with Summary, Matched, and Analysis tabs.
 
     Args:
         matched_df: Matched records from pipeline
-        unmatched_df: Unmatched records from pipeline
+        unmatched_df: Unmatched records from pipeline (None for phase output)
         output_path: Path to write the Excel file
         stats: Optional pipeline stats dict
         recipe: Optional recipe dict. When present and output.columns
@@ -287,7 +287,7 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame,
     # --- Analysis Tab ---
     ws_analysis = wb.create_sheet("Analysis")
 
-    if unmatched_df.height > 0:
+    if unmatched_df is not None and unmatched_df.height > 0:
         if "reason_code" not in unmatched_df.columns:
             unmatched_df = unmatched_df.with_columns(
                 pl.lit("no_name_match").alias("reason_code"),
@@ -357,3 +357,66 @@ def run_and_report(recipe_path: str, base_dir: str = ".",
     )
 
     return path
+
+
+def write_raw_data(df, path: str, fmt: str):
+    """Write a DataFrame as raw data (no summary tab, no formatting).
+
+    Args:
+        df: Polars DataFrame to write
+        path: Output file path
+        fmt: Format string ('csv', 'xlsx', or 'parquet')
+    """
+    if fmt == "csv":
+        df.write_csv(path)
+    elif fmt == "xlsx":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws.append(list(df.columns))
+        for row in df.iter_rows():
+            ws.append([v for v in row])
+        wb.save(path)
+    elif fmt == "parquet":
+        df.write_parquet(path)
+    else:
+        raise ValueError(f"Unsupported output format: {fmt}")
+
+
+def apply_column_mapping(df, output_cfg: dict):
+    """Apply output.columns.matched mapping to a DataFrame.
+
+    Selects and renames columns per the recipe's output.columns config.
+    Returns the original DataFrame if no column mapping is configured.
+    """
+    cols_cfg = output_cfg.get("columns", {})
+    matched_cols = cols_cfg.get("matched")
+    if not matched_cols:
+        return df
+
+    select_cols = []
+    rename_map = {}
+    for entry in matched_cols:
+        # Support both 'field' and 'fields' (coalesce)
+        field = entry.get("field")
+        fields = entry.get("fields", [])
+        header = entry.get("header", field)
+
+        if field and field in df.columns:
+            select_cols.append(field)
+            if header and header != field:
+                rename_map[field] = header
+        elif fields:
+            # Coalesce: first non-null field wins
+            for f in fields:
+                if f in df.columns:
+                    select_cols.append(f)
+                    if header and header != f:
+                        rename_map[f] = header
+                    break
+
+    if select_cols:
+        df = df.select(select_cols)
+    if rename_map:
+        df = df.rename(rename_map)
+    return df

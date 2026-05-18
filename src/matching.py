@@ -19,6 +19,14 @@ from rapidfuzz import process as rprocess
 from address import score_address_multi_tier
 from normalize import clean, normalized
 
+
+def _next_dst_suffix(current: str) -> str:
+    """Increment a _dst suffix: _dst -> _dst2 -> _dst3 -> _dst4 etc."""
+    if current == "_dst":
+        return "_dst2"
+    n = int(current.removeprefix("_dst"))
+    return f"_dst{n + 1}"
+
 # ---------------------------------------------------------------------------
 # Date gate (Polars native)
 # ---------------------------------------------------------------------------
@@ -127,7 +135,7 @@ def match_names_exact(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         src_cols = set(src.columns)
         dst_cols_to_add = set(dst.columns) - {"_match_key"}
         while any((c + suffix) in src_cols for c in dst_cols_to_add if c in src_cols):
-            suffix = suffix + "2"
+            suffix = _next_dst_suffix(suffix)
 
         matched = src.join(
             dst, on="_match_key", how="inner", suffix=suffix,
@@ -253,7 +261,7 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         fsuffix = "_dst"
         src_col_set = set(matched_src.columns)
         while any((c + fsuffix) in src_col_set for c in matched_dst.columns if c in src_col_set):
-            fsuffix = fsuffix + "2"
+            fsuffix = _next_dst_suffix(fsuffix)
         dst_renames = {}
         for col in matched_dst.columns:
             if col in matched_src.columns:
@@ -549,8 +557,18 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
     for inherit_cfg in step_config.get("inherit", []):
         src_col = inherit_cfg["source"]
         as_col = inherit_cfg["as"]
-        if src_col + "_dst" in matched.columns:
-            matched = matched.rename({src_col + "_dst": as_col})
+        # Find the actual suffixed column (handles _dst, _dst2, _dst3, etc.)
+        # Cap at 20 iterations -- supports up to 20 phases with overlapping columns
+        found = None
+        suffix = "_dst"
+        for _ in range(20):
+            candidate = src_col + suffix
+            if candidate in matched.columns:
+                found = candidate
+                break
+            suffix = _next_dst_suffix(suffix)
+        if found:
+            matched = matched.rename({found: as_col})
         elif src_col in matched.columns:
             matched = matched.rename({src_col: as_col})
 
@@ -965,6 +983,7 @@ def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
     tie_breaker = recipe.get("output", {}).get("tie_breaker")
     phases = recipe["phases"]
     phase_stats = []
+    phase_snapshots = []  # per-phase matched DataFrames for phase-level output
     previous_matched = None
     step_offset = 0
     total_match_time = 0
@@ -1015,6 +1034,7 @@ def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
                 "time": _time.time() - t,
             })
             previous_matched = pl.DataFrame()
+            phase_snapshots.append(pl.DataFrame())
             step_offset += len(phase_steps)
             continue
 
@@ -1063,11 +1083,18 @@ def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
             "df", pl.DataFrame()
         ).height
 
+        # Per-step counts within this phase (for summary reporting)
+        phase_step_counts = {}
+        if phase_matched.height > 0 and "match_step" in phase_matched.columns:
+            for row in phase_matched.group_by("match_step").len().iter_rows():
+                phase_step_counts[row[0]] = row[1]
+
         phase_stats.append({
             "name": phase_name,
             "matched_count": phase_matched.height,
             "input_count": input_count,
             "time": phase_time,
+            "step_counts": phase_step_counts,
         })
 
         print(
@@ -1085,6 +1112,7 @@ def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
                 first_phase_matched = phase_matched
 
         cumulative_rejections.update(phase_result["all_rejections"])
+        phase_snapshots.append(phase_matched.clone())
         previous_matched = phase_matched
         step_offset += len(phase_steps)
 
@@ -1113,11 +1141,12 @@ def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
             partial_df = first_phase_matched.filter(
                 pl.col(first_phase_track_field).cast(pl.String).is_in(partial_keys)
             )
-            # Align columns -- add missing columns as null
+            # Align columns -- add missing columns as null (match dtype)
             for col in combined.columns:
                 if col not in partial_df.columns:
+                    col_dtype = combined.schema[col]
                     partial_df = partial_df.with_columns(
-                        pl.lit(None).cast(pl.String).alias(col)
+                        pl.lit(None).cast(col_dtype).alias(col)
                     )
             # Select same columns in same order
             partial_df = partial_df.select(combined.columns)
@@ -1142,4 +1171,5 @@ def _run_multi_phase(recipe, sources, aliases, stopwords, timings):
         },
         "timing": timings,
         "phases": phase_stats,
+        "phase_snapshots": phase_snapshots,
     }

@@ -1,67 +1,27 @@
-# GLEIF Parent Lookup - Multi-Phase Pipeline
+# GLEIF Parent Lookup - Per-Phase Output Example
 #
-# Resolves internal vendor names to their GLEIF parent company hierarchy.
+# Demonstrates per-phase output modes (ADR-003):
+#   Phase 1: CSV data + markdown summary (vendor-LEI reconciliation for DB import)
+#   Phase 2: raw XLSX data only (intermediate relationship mapping, no summary)
+#   Phase 3: CSV data + both md and xlsx summary (final deliverable)
 #
-# Phase 1: Match vendor names against GLEIF Level 1 (LEI-CDF) to find LEI
-# Phase 2: Match LEIs against Level 2 RR (Relationship Records) to find
-#           the direct accounting consolidating parent LEI
-# Phase 3: Match parent LEIs back against Level 1 to resolve parent name
-#           and country
-#
-# Data flow:
-#   Internal Vendors -> GLEIF L1 (who is who)
-#                    -> GLEIF L2 RR (who owns whom)
-#                    -> GLEIF L1 (resolve parent identity)
-#
-# See docs/gleif_parent_matching_design_note.md for full design.
+# Uses local test data (no GLEIF download).
 
-name: GLEIF Parent Lookup (Multi-Phase)
+name: GLEIF Phased Output Example
 description: >
-  Match internal vendor names to GLEIF LEI, resolve direct parent
-  relationships via Level 2 RR, then resolve parent entity names
-  and country from Level 1. Produces a rollup showing vendor ->
-  LEI -> parent LEI -> parent name.
+  Per-phase output demo. Phase 1 exports vendor-LEI reconciliation as CSV
+  with markdown summary. Phase 2 exports relationship matches as raw XLSX.
+  Phase 3 exports final results as CSV with full reporting (md + xlsx).
 
 sources:
   vendors:
     file: gleif_test_vendors.csv
 
   gleif_lei:
-    loader: http
-    url_from:
-      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
-      json_path: "data[0].lei2.full_file.csv.url"
-    format: zip
-    columns:
-      - LEI
-      - Entity.LegalName
-      - Entity.LegalAddress.FirstAddressLine
-      - Entity.LegalAddress.City
-      - Entity.LegalAddress.Country
-      - Entity.HeadquartersAddress.Country
-      - Entity.LegalJurisdiction
-      - Entity.EntityStatus
-      - Registration.RegistrationStatus
-    cache_ttl: "7d"
-    cache_format: csv
-    timeout: 300
+    file: gleif_lei_test.csv
 
   gleif_rr:
-    loader: http
-    url_from:
-      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
-      json_path: "data[0].rr.full_file.csv.url"
-    format: zip
-    columns:
-      - Relationship.StartNode.NodeID
-      - Relationship.EndNode.NodeID
-      - Relationship.RelationshipType
-      - Relationship.RelationshipStatus
-      - Relationship.EndNode.NodeIDType
-      - Registration.RegistrationStatus
-    cache_ttl: "7d"
-    cache_format: csv
-    timeout: 300
+    file: gleif_rr_test.csv
 
 phases:
   - name: "Phase 1: Match vendors to LEI"
@@ -98,6 +58,29 @@ phases:
             method: fuzzy
             threshold: 88
             tiers: [clean, normalized]
+    output:
+      format: csv
+      summary: md
+      columns:
+        matched:
+          - field: Vendor ID
+            header: Vendor ID
+          - field: Vendor Name
+            header: Vendor Name
+          - field: Country
+            header: Vendor Country
+          - field: LEI
+            header: Matched LEI
+          - field: Entity.LegalName
+            header: GLEIF Legal Name
+          - field: Entity.LegalAddress.Country
+            header: Entity Country
+          - field: match_step
+            header: Match Method
+          - field: match_tier
+            header: Match Tier
+          - field: name_score
+            header: Match Score
 
   - name: "Phase 2: Resolve parent LEI from RR"
     populations:
@@ -130,6 +113,21 @@ phases:
             destination: Relationship.StartNode.NodeID
             method: exact
             tiers: [raw]
+    output:
+      format: xlsx
+      summary: none
+      columns:
+        matched:
+          - field: Vendor ID
+            header: Vendor ID
+          - field: Vendor Name
+            header: Vendor Name
+          - field: LEI
+            header: Child LEI
+          - field: Relationship.EndNode.NodeID
+            header: Parent LEI
+          - field: Relationship.RelationshipType
+            header: Relationship Type
 
   - name: "Phase 3: Resolve parent name from LEI"
     populations:

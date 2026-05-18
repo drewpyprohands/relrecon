@@ -6,7 +6,12 @@ recipe config (what was configured) with the pipeline stats (what
 actually happened). Output as markdown string or Excel "Summary" tab.
 """
 
-import polars as pl
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 def _get_all_steps(recipe: dict) -> list:
@@ -169,9 +174,14 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
     unmatched = stats.get("unmatched_count", 0)
     pct = round(matched / total * 100) if total > 0 else 0
 
-    # Per-step counts from match_step column
+    # Per-step counts: use phase_stats step_counts for multi-phase,
+    # fall back to final matched_df grouping for single-phase
     step_counts = {}
-    if matched_df is not None and "match_step" in matched_df.columns:
+    phase_stats_list = stats.get("phases", []) if stats else []
+    if phase_stats_list:
+        for ps in phase_stats_list:
+            step_counts.update(ps.get("step_counts", {}))
+    elif matched_df is not None and "match_step" in matched_df.columns:
         for row in matched_df.group_by("match_step").len().iter_rows():
             step_counts[row[0]] = row[1]
 
@@ -190,6 +200,12 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
     lines.append("**Populations:**")
     for pop_name, pop_cfg in _get_all_populations(recipe).items():
         src_name = pop_cfg.get("source", "")
+
+        # Skip _previous_matched populations -- they're runtime-only and
+        # showing them with misleading row counts adds confusion
+        if src_name == "_previous_matched":
+            continue
+
         source_file = ""
         if src_name and src_name in recipe.get("sources", {}):
             source_file = recipe["sources"][src_name].get("file", "")
@@ -284,10 +300,17 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
             )
 
     lines.append("")
-    lines.append(
-        "Records that don't match or fail a threshold in one step "
-        "move to the next. A record is only unmatched if it fails all steps."
-    )
+    if recipe.get("phases"):
+        lines.append(
+            "Each phase passes its matched records to the next phase as input. "
+            "Records that match in an early phase but not in a later phase "
+            "appear in the final output with null columns for the phases they missed."
+        )
+    else:
+        lines.append(
+            "Records that don't match or fail a threshold in one step "
+            "move to the next. A record is only unmatched if it fails all steps."
+        )
 
     # --- Mermaid diagram ---
     mermaid_output = None
@@ -302,6 +325,138 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
         lines.append("```mermaid")
         lines.append(mermaid_output)
         lines.append("```")
+
+    return "\n".join(lines)
+
+
+def generate_phase_summary(
+    phase_cfg: dict,
+    phase_idx: int,
+    phase_stats: dict,
+    recipe: dict,
+    recipe_file: str | None = None,
+    mermaid: str = "default",
+) -> str:
+    """Generate a markdown summary for a single phase in a multi-phase pipeline.
+
+    Produces a self-contained summary with phase-specific stats, step table,
+    and Mermaid diagram -- suitable for standalone delivery alongside the
+    phase data file.
+    """
+    phase_name = phase_cfg.get("name", f"Phase {phase_idx + 1}")
+    recipe_name = recipe.get("name", "Unnamed Recipe")
+    phase_input = phase_stats.get("input_count", 0)
+    phase_matched = phase_stats.get("matched_count", 0)
+    phase_unmatched = phase_input - phase_matched
+    pct = round(phase_matched / phase_input * 100) if phase_input > 0 else 0
+    step_counts = phase_stats.get("step_counts", {})
+
+    lines = []
+    lines.append(f"# {phase_name} -- Run Summary")
+    lines.append(f"**Pipeline:** {recipe_name}")
+    if recipe_file:
+        lines.append(f"**Recipe file:** `{recipe_file}`  ")
+    lines.append("")
+
+    # --- Populations ---
+    step_sources = {s["source"] for s in phase_cfg.get("steps", [])}
+    step_dests = {s["destination"] for s in phase_cfg.get("steps", [])}
+
+    lines.append("**Populations:**")
+    for pop_name, pop_cfg in phase_cfg.get("populations", {}).items():
+        src_name = pop_cfg.get("source", "")
+        if src_name == "_previous_matched":
+            lines.append(f"- **{pop_name}:** output from previous phase")
+            continue
+
+        source_file = ""
+        if src_name and src_name in recipe.get("sources", {}):
+            source_file = recipe["sources"][src_name].get("file", "")
+
+        filter_desc = _describe_filters(pop_cfg)
+        file_part = f" from {source_file}" if source_file else ""
+
+        if pop_cfg.get("action") == "exclude":
+            lines.append(f"- **{pop_name}:** excluded ({filter_desc})")
+        elif pop_name in step_sources:
+            lines.append(
+                f"- **{pop_name}:** {phase_input} records{file_part} "
+                f"({filter_desc}) -- *matching target*"
+            )
+        elif pop_name in step_dests:
+            lines.append(f"- **{pop_name}:**{file_part} ({filter_desc}) -- *destination*")
+        else:
+            lines.append(f"- **{pop_name}:**{file_part} ({filter_desc})")
+    lines.append("")
+
+    # --- Results ---
+    lines.append(f"**Matched:** {phase_matched} of {phase_input} ({pct}%)  ")
+    lines.append(f"**Unmatched:** {phase_unmatched}  ")
+    phase_time = phase_stats.get("time")
+    if phase_time is not None:
+        lines.append(f"**Phase time:** {phase_time:.2f}s  ")
+    lines.append("")
+
+    # --- Step table ---
+    lines.append("**Matching steps (in priority order):**")
+    lines.append("")
+
+    step_header = (
+        "| Step | Source Pop | Source Column | Dest Pop | Dest Column "
+        "| Method | Data Tier | Name Threshold | Address Threshold "
+        "| Address Tier | Date Filter | Other Conditions "
+        "| Matched | % of Total | Leftover |"
+    )
+    step_sep = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    lines.append(step_header)
+    lines.append(step_sep)
+
+    cumulative = 0
+    for i, step in enumerate(phase_cfg.get("steps", []), 1):
+        count = step_counts.get(step.get("name", ""), 0)
+        cumulative += count
+        remaining = phase_input - cumulative
+        info = _describe_step_enhanced(
+            step, i, count, phase_matched, phase_input, cumulative
+        )
+        pct_of_total = round(count / phase_input * 100, 1) if phase_input > 0 else 0.0
+        lines.append(
+            f"| {info['step']} | {info['source_pop']} | {info['source_col']} "
+            f"| {info['dest_pop']} | {info['dest_col']} | {info['method']} "
+            f"| {info['data_tier']} | {info['name_threshold']} "
+            f"| {info['addr_threshold']} "
+            f"| {info['addr_tier']} | {info['date_filter']} "
+            f"| {info['other_conditions']} "
+            f"| {info['matched']} | {pct_of_total}% | {remaining} |"
+        )
+
+    lines.append("")
+    lines.append(
+        "Records that don't match or fail a threshold in one step "
+        "move to the next. A record is only unmatched if it fails all steps."
+    )
+
+    # --- Mermaid diagram ---
+    if mermaid != "disabled":
+        # Build a single-phase Mermaid for this phase
+        mini_recipe = {
+            "sources": recipe.get("sources", {}),
+            "populations": phase_cfg.get("populations", {}),
+            "steps": phase_cfg.get("steps", []),
+        }
+        phase_steps = phase_cfg.get("steps", [])
+        mermaid_output = _generate_mermaid_single_phase(
+            mini_recipe, phase_steps, step_counts,
+            phase_input, phase_matched, phase_unmatched,
+            detailed=(mermaid == "detailed"),
+        )
+        if mermaid_output:
+            lines.append("")
+            lines.append("**Matching flow:**")
+            lines.append("")
+            lines.append("```mermaid")
+            lines.append(mermaid_output)
+            lines.append("```")
 
     return "\n".join(lines)
 
@@ -323,35 +478,52 @@ def generate_mermaid(recipe: dict, stats: dict, matched_df: pl.DataFrame | None 
     matched_total = stats.get("matched_count", 0)
     unmatched_total = stats.get("unmatched_count", 0)
 
-    # Per-step counts
+    # Per-step counts: prefer phase_stats for multi-phase
     step_counts = {}
-    if matched_df is not None and "match_step" in matched_df.columns:
+    phase_stats_list = stats.get("phases", []) if stats else []
+    if phase_stats_list:
+        for ps in phase_stats_list:
+            step_counts.update(ps.get("step_counts", {}))
+    elif matched_df is not None and "match_step" in matched_df.columns:
         for row in matched_df.group_by("match_step").len().iter_rows():
             step_counts[row[0]] = row[1]
+
+    phases = recipe.get("phases", [])
+    phase_stats_list = stats.get("phases", []) if stats else []
+
+    if phases and phase_stats_list:
+        return _generate_mermaid_multi_phase(
+            recipe, phases, phase_stats_list, step_counts,
+            total, matched_total, unmatched_total,
+        )
 
     steps = _get_all_steps(recipe)
     if not steps:
         return ""
 
+    return _generate_mermaid_single_phase(
+        recipe, steps, step_counts, total, matched_total, unmatched_total,
+        detailed=detailed,
+    )
+
+
+def _generate_mermaid_single_phase(
+    recipe, steps, step_counts, total, matched_total, unmatched_total,
+    detailed=False,
+):
+    """Mermaid diagram for single-phase cascade recipes."""
     lines = ["flowchart TD"]
 
     # Source population
     source_pop = steps[0].get("source", "source")
     lines.append(f"    Pop[{source_pop}: {total} records]")
 
-    # Track remaining for cascade
-    remaining = total
-
     for i, step in enumerate(steps):
         step_id = f"S{i+1}"
-        step_name = step.get("name", f"Step {i+1}")
-        count = step_counts.get(step_name, 0)
         dest = step.get("destination", "?")
-
         mf = step.get("match_fields", [{}])[0]
         method = mf.get("method", "?").capitalize()
 
-        # Build step label
         if detailed:
             mf.get("threshold", 100 if mf.get("method") == "exact" else "?")
             addr = step.get("address_support", {})
@@ -379,36 +551,90 @@ def generate_mermaid(recipe: dict, stats: dict, matched_df: pl.DataFrame | None 
 
         lines.append(f"    {label}")
 
-    # Matched and unmatched nodes
     lines.append(f"    M[Matched: {matched_total}]")
     lines.append(f"    U[Unmatched: {unmatched_total}]")
     lines.append("")
 
-    # Connections (cascade flow)
     remaining = total
-
     for i, step in enumerate(steps):
         step_id = f"S{i+1}"
         step_name = step.get("name", f"Step {i+1}")
         count = step_counts.get(step_name, 0)
 
-        # Connect to this step (solid from Pop, dashed cascade from previous step)
         if i == 0:
             lines.append("    Pop --> S1")
 
-        # Matched output
         if count > 0:
             lines.append(f"    {step_id} -->|{count} matched| M")
 
         remaining -= count
 
-        # If this is the last step, remaining goes to unmatched
         if i == len(steps) - 1:
             if remaining > 0:
                 lines.append(f"    {step_id} -->|{remaining} unmatched| U")
         else:
-            # Dashed line to next step for cascade
             lines.append(f"    {step_id} -.->|{remaining} remaining| S{i+2}")
+
+    return "\n".join(lines)
+
+
+def _generate_mermaid_multi_phase(recipe, phases, phase_stats_list,
+                                  step_counts, total, matched_total,
+                                  unmatched_total):
+    """Mermaid diagram for multi-phase pipelines.
+
+    Shows each phase as a box with input/output counts and arrows
+    between phases showing how matched records flow forward.
+    """
+    lines = ["flowchart TD"]
+
+    # Source node
+    source_pop = phases[0].get("steps", [{}])[0].get("source", "source")
+    lines.append(f"    Pop[{source_pop}: {total} records]")
+
+    # Phase nodes
+    for pi, phase in enumerate(phases):
+        ps = phase_stats_list[pi] if pi < len(phase_stats_list) else {}
+        phase_name = phase.get("name", f"Phase {pi + 1}")
+        p_input = ps.get("input_count", "?")
+        p_matched = ps.get("matched_count", "?")
+
+        # Show step breakdown inside the phase
+        phase_steps = phase.get("steps", [])
+        step_details = []
+        for step in phase_steps:
+            sname = step.get("name", "?")
+            scount = step_counts.get(sname, 0)
+            mf = step.get("match_fields", [{}])[0]
+            method = mf.get("method", "?").capitalize()
+            step_details.append(f"{method}: {scount}")
+
+        detail_str = ", ".join(step_details) if step_details else ""
+        if detail_str:
+            label = f"P{pi+1}[\"{phase_name}\nIn: {p_input} | Out: {p_matched}\n{detail_str}\"]"
+        else:
+            label = f"P{pi+1}[\"{phase_name}\nIn: {p_input} | Out: {p_matched}\"]"
+        lines.append(f"    {label}")
+
+    lines.append(f"    M[Matched: {matched_total}]")
+    lines.append(f"    U[Unmatched: {unmatched_total}]")
+    lines.append("")
+
+    # Connections
+    lines.append("    Pop --> P1")
+
+    # Unmatched branch from Phase 1 (records that never matched)
+    if unmatched_total > 0:
+        lines.append(f"    P1 -.->|{unmatched_total} unmatched| U")
+
+    for pi in range(len(phases)):
+        ps = phase_stats_list[pi] if pi < len(phase_stats_list) else {}
+        p_matched = ps.get("matched_count", 0)
+        if pi < len(phases) - 1:
+            lines.append(f"    P{pi+1} -->|{p_matched} matched| P{pi+2}")
+        else:
+            # Last phase feeds into final output
+            lines.append(f"    P{pi+1} -->|{matched_total} matched| M")
 
     return "\n".join(lines)
 
@@ -440,9 +666,13 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
     unmatched = stats.get("unmatched_count", 0)
     pct = round(matched / total * 100) if total > 0 else 0
 
-    # Per-step counts
+    # Per-step counts: prefer phase_stats for multi-phase
     step_counts = {}
-    if matched_df is not None and "match_step" in matched_df.columns:
+    phase_stats_list_tab = stats.get("phases", []) if stats else []
+    if phase_stats_list_tab:
+        for ps in phase_stats_list_tab:
+            step_counts.update(ps.get("step_counts", {}))
+    elif matched_df is not None and "match_step" in matched_df.columns:
         for row in matched_df.group_by("match_step").len().iter_rows():
             step_counts[row[0]] = row[1]
 
@@ -469,6 +699,11 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
     row += 1
     for pop_name, pop_cfg in _get_all_populations(recipe).items():
         src_name = pop_cfg.get("source", "")
+
+        # Skip _previous_matched populations -- runtime-only
+        if src_name == "_previous_matched":
+            continue
+
         source_file = ""
         if src_name and src_name in recipe.get("sources", {}):
             source_file = recipe["sources"][src_name].get("file", "")
@@ -590,11 +825,18 @@ def write_summary_tab(ws, recipe: dict, stats: dict, matched_df: pl.DataFrame,
             row += 1
 
     row += 1
-    note = ws.cell(
-        row=row, column=1,
-        value="Records that don't match or fail a threshold in one step "
-              "move to the next. A record is only unmatched if it fails all steps.",
-    )
+    if recipe.get("phases"):
+        note_text = (
+            "Each phase passes its matched records to the next phase as input. "
+            "Records that match in an early phase but not in a later phase "
+            "appear in the final output with null columns for the phases they missed."
+        )
+    else:
+        note_text = (
+            "Records that don't match or fail a threshold in one step "
+            "move to the next. A record is only unmatched if it fails all steps."
+        )
+    note = ws.cell(row=row, column=1, value=note_text)
     note.alignment = wrap
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(headers))
 

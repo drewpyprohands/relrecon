@@ -133,6 +133,7 @@ steps:
 
 output:
   format: xlsx
+  summary: [md, xlsx]
   path: output/l1_reconciliation_report.xlsx
   match_mode: best_match
   tabs:

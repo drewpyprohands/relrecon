@@ -5,13 +5,27 @@
   "type": "object",
   "required": [
     "name",
-    "sources",
-    "output"
+    "sources"
   ],
   "additionalProperties": false,
   "oneOf": [
-    {"required": ["populations", "steps"]},
-    {"required": ["phases"]}
+    {
+      "required": [
+        "populations",
+        "steps",
+        "output"
+      ]
+    },
+    {
+      "required": [
+        "phases"
+      ],
+      "not": {
+        "required": [
+          "output"
+        ]
+      }
+    }
   ],
   "properties": {
     "name": {
@@ -145,402 +159,13 @@
       }
     },
     "populations": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "required": [
-          "source"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "source": {
-            "type": "string"
-          },
-          "record_key": {
-            "type": "string",
-            "description": "Field that uniquely identifies each source record. Used for dedup in best_match mode. If omitted, dedup falls back to match field (may collapse records with duplicate names)."
-          },
-          "filter": {
-            "type": "array",
-            "items": {
-              "$ref": "#/definitions/filter_condition"
-            }
-          },
-          "action": {
-            "type": "string",
-            "enum": [
-              "exclude"
-            ]
-          },
-          "invalid_fields": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Fields in this population known to contain invalid/unreliable data. Informational \u2014 not used for matching logic."
-          }
-        }
-      }
+      "$ref": "#/definitions/populations"
     },
     "steps": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "name",
-          "source",
-          "destination",
-          "match_fields"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string",
-            "description": "Population name to match from"
-          },
-          "destination": {
-            "type": "string",
-            "description": "Population or source name to match against"
-          },
-          "match_fields": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "source",
-                "destination",
-                "method",
-                "tiers"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "source": {
-                  "type": "string"
-                },
-                "destination": {
-                  "type": "string"
-                },
-                "method": {
-                  "type": "string",
-                  "enum": [
-                    "exact",
-                    "fuzzy"
-                  ]
-                },
-                "threshold": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100,
-                  "default": 80,
-                  "description": "Minimum fuzzy score (0-100) for method: fuzzy. Ignored for exact."
-                },
-                "scorer": {
-                  "type": "string",
-                  "enum": [
-                    "token_sort_ratio",
-                    "token_set_ratio",
-                    "ratio",
-                    "partial_ratio",
-                    "WRatio"
-                  ],
-                  "default": "token_sort_ratio",
-                  "description": "RapidFuzz scorer function for method: fuzzy. Ignored for exact."
-                },
-                "tiers": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "enum": [
-                      "raw",
-                      "clean",
-                      "normalized"
-                    ]
-                  }
-                }
-              }
-            }
-          },
-          "address_support": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "source": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "destination": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "parser": {
-                "type": "string",
-                "enum": [
-                  "auto",
-                  "libpostal",
-                  "default"
-                ],
-                "default": "auto"
-              },
-              "threshold": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 100,
-                "description": "Minimum address score to keep a match. Records below this cascade to later steps."
-              },
-              "tiers": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "raw",
-                    "clean",
-                    "normalized"
-                  ]
-                },
-                "default": [
-                  "raw",
-                  "clean",
-                  "normalized"
-                ],
-                "description": "Normalization tiers to try for address scoring. Default: all three. Order determines tie-breaking (first wins)."
-              },
-              "weights": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "street_name": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "default": 0.6,
-                    "description": "Weight for street name component in address scoring (0.0-1.0). Remainder goes to full string score. Default: 0.6 (60% street + 40% full string). Applied whenever both addresses have a parseable street name."
-                  }
-                }
-              },
-              "require_street_match": {
-                "type": "boolean",
-                "default": false,
-                "description": "When true, reject address matches where street names differ (street_match is false). Rejected records cascade to later steps or appear in Analysis with reason_code 'street_mismatch'. Default: false (street weighting only, no hard gate)."
-              }
-            }
-          },
-          "date_gate": {
-            "type": "object",
-            "required": [
-              "field",
-              "max_age_years",
-              "applies_to"
-            ],
-            "additionalProperties": false,
-            "description": "Legacy date recency filter. Prefer 'filters' with op: max_age_years instead. Both are supported \u2014 date_gate is internally converted to a filter.",
-            "properties": {
-              "field": {
-                "type": "string"
-              },
-              "max_age_years": {
-                "type": "number"
-              },
-              "applies_to": {
-                "type": "string",
-                "enum": [
-                  "destination",
-                  "source",
-                  "both"
-                ]
-              }
-            }
-          },
-          "filters": {
-            "type": "array",
-            "description": "Generic step-level filters applied before matching. Supports all population filter ops plus max_age_years.",
-            "items": {
-              "$ref": "#/definitions/step_filter_condition"
-            }
-          },
-          "inherit": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "source",
-                "as"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "source": {
-                  "type": "string",
-                  "description": "Destination column to inherit on match"
-                },
-                "as": {
-                  "type": "string",
-                  "description": "Column name in output for the inherited value"
-                }
-              }
-            }
-          }
-        }
-      }
+      "$ref": "#/definitions/steps"
     },
     "output": {
-      "type": "object",
-      "required": [
-        "format"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "type": "string",
-          "enum": [
-            "xlsx",
-            "csv",
-            "parquet"
-          ]
-        },
-        "path": {
-          "type": "string",
-          "description": "Output path hint. CLI overrides this with a timestamped filename."
-        },
-        "match_mode": {
-          "type": "string",
-          "enum": [
-            "best_match",
-            "all_matches"
-          ],
-          "default": "best_match"
-        },
-        "tie_breaker": {
-          "type": "object",
-          "description": "Tie-breaker for selecting among duplicate destination matches. Sorts by column value after stripping optional prefix.",
-          "additionalProperties": false,
-          "required": [
-            "column"
-          ],
-          "properties": {
-            "column": {
-              "type": "string",
-              "description": "Destination column to sort by for tie-breaking"
-            },
-            "strip_prefix": {
-              "type": "string",
-              "description": "'alpha' strips all leading letters and parses the remainder as an integer for numeric sorting (e.g. 'S1013' -> 1013). Any other string is treated as a prefix to strip from the start of the value before sorting as text (e.g. 'S' strips leading 'S' only). Omit or set to empty string for plain string sorting."
-            },
-            "order": {
-              "type": "string",
-              "enum": [
-                "asc",
-                "desc"
-              ],
-              "default": "asc",
-              "description": "Sort order: 'asc' (lowest wins, default) or 'desc' (highest wins)"
-            }
-          }
-        },
-        "tabs": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "name",
-              "type"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "matched_records",
-                  "unmatched_review"
-                ]
-              }
-            }
-          }
-        },
-        "columns": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Report column definitions. When omitted, hardcoded defaults are used (backward compatible).",
-          "properties": {
-            "matched": {
-              "type": "array",
-              "description": "Columns for the Matched tab, in display order.",
-              "items": {
-                "type": "object",
-                "required": [
-                  "header"
-                ],
-                "oneOf": [
-                  {
-                    "required": [
-                      "field"
-                    ],
-                    "properties": {
-                      "field": {
-                        "type": "string",
-                        "description": "Single DataFrame column name."
-                      },
-                      "header": {
-                        "type": "string",
-                        "description": "Display header in Excel."
-                      }
-                    },
-                    "additionalProperties": false
-                  },
-                  {
-                    "required": [
-                      "fields"
-                    ],
-                    "properties": {
-                      "fields": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        },
-                        "minItems": 1,
-                        "description": "Variant column names to coalesce (for dest columns from different steps)."
-                      },
-                      "header": {
-                        "type": "string",
-                        "description": "Display header in Excel."
-                      }
-                    },
-                    "additionalProperties": false
-                  }
-                ]
-              }
-            },
-            "analysis": {
-              "type": "array",
-              "description": "Columns for the Analysis tab, in display order.",
-              "items": {
-                "type": "object",
-                "required": [
-                  "field",
-                  "header"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "field": {
-                    "type": "string"
-                  },
-                  "header": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      "$ref": "#/definitions/output"
     },
     "step_defaults": {
       "type": "object",
@@ -582,7 +207,11 @@
       "description": "Multi-phase pipeline. Each phase has its own populations and steps. Use _previous_matched as a source to chain phase outputs.",
       "items": {
         "type": "object",
-        "required": ["name", "populations", "steps"],
+        "required": [
+          "name",
+          "populations",
+          "steps"
+        ],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -590,47 +219,449 @@
             "description": "Human-readable phase name"
           },
           "populations": {
-            "type": "object",
-            "description": "Per-phase populations. Use _previous_matched as source to reference prior phase output.",
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "source": {
-                  "type": "string"
-                },
-                "record_key": {
-                  "type": "string"
-                },
-                "filter": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/definitions/filter_condition"
-                  }
-                },
-                "action": {
-                  "type": "string",
-                  "enum": ["include", "exclude"]
-                }
-              }
-            }
+            "$ref": "#/definitions/populations"
           },
           "steps": {
-            "type": "array",
-            "description": "Phase matching steps (same schema as top-level steps)",
-            "items": {
-              "type": "object"
-            }
+            "$ref": "#/definitions/steps"
           },
           "step_defaults": {
             "type": "object",
             "description": "Per-phase step defaults (overrides top-level step_defaults)",
             "additionalProperties": true
+          },
+          "output": {
+            "$ref": "#/definitions/output"
           }
         }
       }
     }
   },
   "definitions": {
+    "populations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "record_key": {
+            "type": "string",
+            "description": "Field that uniquely identifies each source record. Used for dedup in best_match mode."
+          },
+          "filter": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/filter_condition"
+            }
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "exclude"
+            ],
+            "description": "Population action: 'exclude' removes these records from matching"
+          },
+          "invalid_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields in this population known to contain invalid/unreliable data. Informational only."
+          }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "source",
+          "destination",
+          "match_fields"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable step name for reporting"
+          },
+          "source": {
+            "type": "string",
+            "description": "Population name to match from"
+          },
+          "destination": {
+            "type": "string",
+            "description": "Population or source name to match against"
+          },
+          "match_fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source",
+                "destination",
+                "method",
+                "tiers"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Column in the source population to match from"
+                },
+                "destination": {
+                  "type": "string",
+                  "description": "Column in the destination population to match against"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "exact",
+                    "fuzzy"
+                  ],
+                  "description": "Matching method: 'exact' for string equality, 'fuzzy' for similarity scoring"
+                },
+                "threshold": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100,
+                  "default": 80,
+                  "description": "Minimum fuzzy score (0-100) for method: fuzzy. Ignored for exact."
+                },
+                "scorer": {
+                  "type": "string",
+                  "enum": [
+                    "token_sort_ratio",
+                    "token_set_ratio",
+                    "ratio",
+                    "partial_ratio",
+                    "WRatio"
+                  ],
+                  "default": "token_sort_ratio",
+                  "description": "RapidFuzz scorer function for method: fuzzy. Ignored for exact."
+                },
+                "tiers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "raw",
+                      "clean",
+                      "normalized"
+                    ]
+                  },
+                  "description": "Normalization tiers to try, in order. Default: all three (raw, clean, normalized)"
+                }
+              }
+            },
+            "description": "Fields to match between source and destination populations"
+          },
+          "address_support": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Address column(s) in the source population"
+              },
+              "destination": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Address column(s) in the destination population"
+              },
+              "parser": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "libpostal",
+                  "default"
+                ],
+                "default": "auto",
+                "description": "Address parser to use. Default: auto (libpostal if available, fallback to built-in)"
+              },
+              "threshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Minimum address score to keep a match. Records below this cascade to later steps."
+              },
+              "tiers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "raw",
+                    "clean",
+                    "normalized"
+                  ]
+                },
+                "default": [
+                  "raw",
+                  "clean",
+                  "normalized"
+                ],
+                "description": "Normalization tiers for address scoring. Default: all three. Order determines tie-breaking."
+              },
+              "weights": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "street_name": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "default": 0.6,
+                    "description": "Weight for street name component (0.0-1.0). Remainder goes to full string score."
+                  }
+                },
+                "description": "Component weights for address scoring"
+              },
+              "require_street_match": {
+                "type": "boolean",
+                "default": false,
+                "description": "When true, reject address matches where street names differ. Rejected records cascade to later steps."
+              }
+            },
+            "description": "Address scoring configuration for this step"
+          },
+          "date_gate": {
+            "type": "object",
+            "required": [
+              "field",
+              "max_age_years",
+              "applies_to"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "Date column to check for recency"
+              },
+              "max_age_years": {
+                "type": "number",
+                "description": "Maximum age in years. Records older than this are filtered out."
+              },
+              "applies_to": {
+                "type": "string",
+                "enum": [
+                  "destination",
+                  "source",
+                  "both"
+                ],
+                "description": "Which population the date field belongs to: 'source' or 'destination'"
+              }
+            },
+            "description": "Legacy date recency filter. Prefer 'filters' with op: max_age_years instead."
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/step_filter_condition"
+            },
+            "description": "Generic step-level filters applied before matching. Supports all population filter ops plus max_age_years."
+          },
+          "inherit": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source",
+                "as"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Destination column to inherit on match"
+                },
+                "as": {
+                  "type": "string",
+                  "description": "Column name in output for the inherited value"
+                }
+              }
+            },
+            "description": "Columns to inherit from the destination record on match"
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "format"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "xlsx",
+            "csv",
+            "parquet"
+          ],
+          "description": "Data export format. CSV/Parquet produce raw data files. XLSX produces raw data (single Data tab) unless summary includes xlsx."
+        },
+        "path": {
+          "type": "string",
+          "description": "Output path hint. CLI overrides this with a timestamped filename."
+        },
+        "summary": {
+          "description": "Summary/report generation. 'md' for markdown, 'xlsx' for formatted report with Summary tab, array for both, 'none' to disable. Omitting defaults to [md, xlsx] for top-level xlsx, none otherwise.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "none",
+                "md",
+                "xlsx"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "md",
+                  "xlsx"
+                ]
+              }
+            }
+          ]
+        },
+        "match_mode": {
+          "type": "string",
+          "enum": [
+            "best_match",
+            "all_matches"
+          ],
+          "default": "best_match",
+          "description": "Match selection mode: 'best_match' keeps one match per source record, 'all_matches' keeps all."
+        },
+        "tabs": {
+          "type": "array",
+          "description": "Deprecated. Tab generation is automatic (Summary + Matched + Analysis). This field is ignored.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "tie_breaker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "column"
+          ],
+          "properties": {
+            "column": {
+              "type": "string",
+              "description": "Destination column to sort by for tie-breaking"
+            },
+            "strip_prefix": {
+              "type": "string",
+              "description": "'alpha' strips leading letters and parses remainder as integer for numeric sorting"
+            },
+            "order": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "asc",
+              "description": "Sort order: 'asc' (lowest wins, default) or 'desc' (highest wins)"
+            }
+          },
+          "description": "Tie-breaker for selecting among duplicate destination matches."
+        },
+        "columns": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "matched": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "header"
+                ],
+                "oneOf": [
+                  {
+                    "required": [
+                      "field"
+                    ],
+                    "properties": {
+                      "field": {
+                        "type": "string"
+                      },
+                      "header": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "required": [
+                      "fields"
+                    ],
+                    "properties": {
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1
+                      },
+                      "header": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "analysis": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "field",
+                  "header"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "header": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Column definitions for data export and reports. When omitted, hardcoded defaults are used."
+        }
+      }
+    },
     "filter_condition": {
       "type": "object",
       "required": [
@@ -674,8 +705,7 @@
         },
         "ignore_case": {
           "type": "boolean",
-          "default": false,
-          "description": "When true, comparison is case-insensitive (lowercases both column and value)."
+          "default": false
         }
       }
     },
@@ -686,7 +716,6 @@
         "op"
       ],
       "additionalProperties": false,
-      "description": "Step-level filter. Supports all population filter ops plus max_age_years for date recency.",
       "properties": {
         "field": {
           "type": "string"
@@ -729,17 +758,14 @@
             "source",
             "both"
           ],
-          "default": "destination",
-          "description": "Which side of the match to apply the filter to."
+          "default": "destination"
         },
         "max_age_years": {
-          "type": "number",
-          "description": "Legacy field \u2014 prefer using op: max_age_years with value instead."
+          "type": "number"
         },
         "ignore_case": {
           "type": "boolean",
-          "default": false,
-          "description": "When true, comparison is case-insensitive (lowercases both column and value)."
+          "default": false
         }
       }
     }
