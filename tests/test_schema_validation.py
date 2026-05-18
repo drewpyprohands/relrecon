@@ -23,7 +23,7 @@ _BASE = {
             ],
         }
     ],
-    "output": {"format": "xlsx"},
+    "output": {"format": "xlsx", "summary": ["md", "xlsx"]},
 }
 
 
@@ -57,7 +57,6 @@ class TestCleanRecipes:
         r["steps"][0]["inherit"] = [{"source": "col1", "as": "new_col"}]
         r["output"]["match_mode"] = "best_match"
         r["output"]["path"] = "out.xlsx"
-        r["output"]["tabs"] = [{"name": "Matched", "type": "matched_records"}]
         r["output"]["columns"] = {
             "matched": [{"field": "name", "header": "Name"}],
             "analysis": [{"field": "name", "header": "Name"}],
@@ -73,8 +72,11 @@ class TestCleanRecipes:
         with open(recipe_path) as f:
             recipe = yaml.safe_load(f)
         warnings = validate_recipe(recipe)
-        # Filter out record_key warnings (pop3 intentionally lacks it)
-        schema_warnings = [w for w in warnings if "record_key" not in w]
+        # Filter out known expected warnings
+        schema_warnings = [
+            w for w in warnings
+            if "record_key" not in w and "tabs" not in w
+        ]
         assert schema_warnings == [], f"L1 recipe has unexpected schema warnings: {schema_warnings}"
 
 
@@ -203,13 +205,13 @@ class TestStructuralErrors:
     def test_invalid_method_enum(self):
         r = _make()
         r["steps"][0]["match_fields"][0]["method"] = "approximate"
-        with pytest.raises(ValueError, match="schema validation failed"):
+        with pytest.raises(ValueError, match="validation failed"):
             validate_recipe(r)
 
     def test_invalid_output_format(self):
         r = _make()
         r["output"]["format"] = "pdf"
-        with pytest.raises(ValueError, match="schema validation failed"):
+        with pytest.raises(ValueError, match="validation failed"):
             validate_recipe(r)
 
 
@@ -387,3 +389,85 @@ class TestStepDefaults:
         r["populations"]["dest_pop"]["action"] = "exclude"
         warnings = validate_recipe(r)
         assert any("action: exclude" in w and "destination" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# Output placement rules (ADR-003)
+# ---------------------------------------------------------------------------
+
+def _make_multi():
+    """Minimal valid multi-phase recipe."""
+    return {
+        "name": "Test Multi",
+        "sources": {"src": {"file": "test.csv"}},
+        "phases": [
+            {
+                "name": "Phase 1",
+                "populations": {
+                    "pop1": {"source": "src", "filter": []},
+                    "pop2": {"source": "src", "filter": []},
+                },
+                "steps": [
+                    {
+                        "name": "step1",
+                        "source": "pop1",
+                        "destination": "pop2",
+                        "match_fields": [
+                            {
+                                "source": "name",
+                                "destination": "name",
+                                "method": "exact",
+                                "tiers": ["raw"],
+                            }
+                        ],
+                    }
+                ],
+                "output": {"format": "csv", "summary": "none"},
+            }
+        ],
+    }
+
+
+class TestOutputPlacement:
+    """ADR-003: output placement validation."""
+
+    def test_multi_phase_with_top_level_output_errors(self):
+        r = _make_multi()
+        r["output"] = {"format": "csv"}
+        with pytest.raises(ValueError, match="top-level"):
+            validate_recipe(r)
+
+    def test_multi_phase_no_output_on_any_phase_errors(self):
+        r = _make_multi()
+        del r["phases"][0]["output"]
+        with pytest.raises(ValueError, match="no output"):
+            validate_recipe(r)
+
+    def test_single_phase_no_output_errors(self):
+        r = _make()
+        del r["output"]
+        with pytest.raises(ValueError):
+            validate_recipe(r)
+
+    def test_multi_phase_valid_per_phase_output(self):
+        r = _make_multi()
+        warnings = validate_recipe(r)
+        # No output-related warnings
+        assert not any("output" in w.lower() for w in warnings)
+
+    def test_single_phase_valid_top_level_output(self):
+        r = _make()
+        warnings = validate_recipe(r)
+        assert not any("output" in w.lower() for w in warnings)
+
+    def test_summary_field_accepted(self):
+        r = _make()
+        r["output"]["summary"] = "md"
+        warnings = validate_recipe(r)
+        assert not any("summary" in w for w in warnings)
+
+    def test_summary_array_accepted(self):
+        r = _make()
+        r["output"]["summary"] = ["md", "xlsx"]
+        warnings = validate_recipe(r)
+        assert not any("summary" in w for w in warnings)

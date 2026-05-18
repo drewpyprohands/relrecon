@@ -1,67 +1,21 @@
-# GLEIF Parent Lookup - Multi-Phase Pipeline
+# GLEIF Parent Lookup - Test variant (local CSV files)
 #
-# Resolves internal vendor names to their GLEIF parent company hierarchy.
-#
-# Phase 1: Match vendor names against GLEIF Level 1 (LEI-CDF) to find LEI
-# Phase 2: Match LEIs against Level 2 RR (Relationship Records) to find
-#           the direct accounting consolidating parent LEI
-# Phase 3: Match parent LEIs back against Level 1 to resolve parent name
-#           and country
-#
-# Data flow:
-#   Internal Vendors -> GLEIF L1 (who is who)
-#                    -> GLEIF L2 RR (who owns whom)
-#                    -> GLEIF L1 (resolve parent identity)
-#
-# See docs/gleif_parent_matching_design_note.md for full design.
+# Same pipeline as gleif_parent_lookup.yaml but uses small local test
+# datasets instead of downloading from GLEIF. Used for CI testing.
 
-name: GLEIF Parent Lookup (Multi-Phase)
+name: GLEIF Parent Lookup Test (Multi-Phase)
 description: >
-  Match internal vendor names to GLEIF LEI, resolve direct parent
-  relationships via Level 2 RR, then resolve parent entity names
-  and country from Level 1. Produces a rollup showing vendor ->
-  LEI -> parent LEI -> parent name.
+  Test variant of GLEIF parent lookup using local CSV test data.
 
 sources:
   vendors:
     file: gleif_test_vendors.csv
 
   gleif_lei:
-    loader: http
-    url_from:
-      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
-      json_path: "data[0].lei2.full_file.csv.url"
-    format: zip
-    columns:
-      - LEI
-      - Entity.LegalName
-      - Entity.LegalAddress.FirstAddressLine
-      - Entity.LegalAddress.City
-      - Entity.LegalAddress.Country
-      - Entity.HeadquartersAddress.Country
-      - Entity.LegalJurisdiction
-      - Entity.EntityStatus
-      - Registration.RegistrationStatus
-    cache_ttl: "7d"
-    cache_format: csv
-    timeout: 300
+    file: gleif_lei_test.csv
 
   gleif_rr:
-    loader: http
-    url_from:
-      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
-      json_path: "data[0].rr.full_file.csv.url"
-    format: zip
-    columns:
-      - Relationship.StartNode.NodeID
-      - Relationship.EndNode.NodeID
-      - Relationship.RelationshipType
-      - Relationship.RelationshipStatus
-      - Relationship.EndNode.NodeIDType
-      - Registration.RegistrationStatus
-    cache_ttl: "7d"
-    cache_format: csv
-    timeout: 300
+    file: gleif_rr_test.csv
 
 phases:
   - name: "Phase 1: Match vendors to LEI"

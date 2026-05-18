@@ -118,6 +118,164 @@ def _run_signal_analysis(args) -> int:
     return 0
 
 
+def _make_phase_slug(phase_cfg: dict, phase_idx: int) -> str:
+    """Generate a filesystem-safe slug from a phase name."""
+    import re
+    name = phase_cfg.get("name", f"phase_{phase_idx + 1}")
+    # Replace non-alnum with underscores, collapse runs, strip edges
+    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+    return slug or f"phase_{phase_idx + 1}"
+
+
+def _write_output(
+    output_cfg: dict,
+    matched_df,
+    unmatched_df,
+    output_path: str,
+    stats: dict,
+    recipe: dict,
+    recipe_file: str,
+    mermaid_mode: str = "default",
+    timing: dict | None = None,
+):
+    """Write output files for a single-phase recipe (backward compatible)."""
+    import time
+
+    from recipe import resolve_summary_modes
+    from report import apply_column_mapping, generate_report, write_raw_data
+
+    summary_modes = resolve_summary_modes(output_cfg)
+    fmt = output_cfg.get("format", "xlsx")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    if "xlsx" in summary_modes and fmt == "xlsx":
+        # Legacy mode: xlsx format + xlsx summary = formatted report
+        t_report = time.time()
+        report_path = generate_report(
+            matched_df, unmatched_df, output_path,
+            stats=stats, recipe=recipe, recipe_file=recipe_file,
+        )
+        print(f"Report saved: {report_path} ({time.time() - t_report:.2f}s)")
+    else:
+        # Raw data export
+        export_df = apply_column_mapping(matched_df, output_cfg)
+        write_raw_data(export_df, output_path, fmt)
+        print(f"Data saved: {output_path} ({fmt}, {export_df.height} rows)")
+
+    if "md" in summary_modes:
+        try:
+            from summary import generate_summary
+            summary_md = generate_summary(
+                recipe, stats, matched_df, timing=timing,
+                mermaid=mermaid_mode, recipe_file=recipe_file,
+            )
+            summary_path = output_path.rsplit(".", 1)[0] + "_summary.md"
+            with open(summary_path, "w") as f:
+                f.write(summary_md)
+            print(f"Summary saved: {summary_path}")
+        except Exception as exc:
+            print(f"[WARN] Summary generation failed: {exc}", file=sys.stderr)
+
+    if "xlsx" in summary_modes and fmt != "xlsx":
+        # Summary xlsx report alongside CSV/parquet data
+        try:
+            report_path = output_path.rsplit(".", 1)[0] + "_report.xlsx"
+            generate_report(
+                matched_df, unmatched_df, report_path,
+                stats=stats, recipe=recipe, recipe_file=recipe_file,
+            )
+            print(f"Report saved: {report_path}")
+        except Exception as exc:
+            print(f"[WARN] Report generation failed: {exc}", file=sys.stderr)
+
+
+def _write_phase_output(
+    phase_cfg: dict,
+    phase_idx: int,
+    phase_df,
+    phase_stats: dict,
+    overall_stats: dict,
+    recipe: dict,
+    recipe_file: str,
+    timestamp: str,
+    mermaid_mode: str = "default",
+):
+    """Write output files for a single phase in a multi-phase pipeline."""
+    from recipe import resolve_summary_modes
+    from report import apply_column_mapping, generate_report, write_raw_data
+
+    phase_output = phase_cfg.get("output", {})
+    fmt = phase_output.get("format", "csv")
+    summary_modes = resolve_summary_modes(phase_output)
+    phase_name = phase_cfg.get("name", f"Phase {phase_idx + 1}")
+    phase_slug = _make_phase_slug(phase_cfg, phase_idx)
+
+    # Resolve data output path
+    data_path = phase_output.get("path")
+    if not data_path:
+        ext = fmt if fmt in ("csv", "parquet") else "xlsx"
+        data_path = f"output/{phase_slug}_{timestamp}.{ext}"
+
+    Path(data_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Write data file
+    export_df = apply_column_mapping(phase_df, phase_output)
+    write_raw_data(export_df, data_path, fmt)
+    print(f"Phase {phase_idx + 1} data: {data_path} ({fmt}, {export_df.height} rows)")
+
+    # Build phase-specific stats for summaries
+    phase_input = phase_stats.get("input_count", 0)
+    phase_matched = phase_stats.get("matched_count", 0)
+    p_stats = {
+        "total_source": phase_input,
+        "matched_count": phase_matched,
+        "unmatched_count": phase_input - phase_matched,
+        "step_details": phase_stats.get("step_details", []),
+        "step_counts": phase_stats.get("step_counts", {}),
+        "phases": [phase_stats],
+    }
+
+    # Build a phase-scoped mini-recipe for report generation (generate_report)
+    mini_recipe = {
+        "name": phase_name,
+        "sources": recipe.get("sources", {}),
+        "populations": phase_cfg.get("populations", {}),
+        "steps": phase_cfg.get("steps", []),
+        "output": phase_output,
+    }
+
+    base_path = data_path.rsplit(".", 1)[0]
+
+    if "md" in summary_modes:
+        try:
+            from summary import generate_phase_summary
+            summary_md = generate_phase_summary(
+                phase_cfg=phase_cfg,
+                phase_idx=phase_idx,
+                phase_stats=phase_stats,
+                recipe=recipe,
+                recipe_file=recipe_file,
+                mermaid=mermaid_mode,
+            )
+            summary_path = base_path + "_summary.md"
+            with open(summary_path, "w") as f:
+                f.write(summary_md)
+            print(f"Phase {phase_idx + 1} summary: {summary_path}")
+        except Exception as exc:
+            print(f"[WARN] Phase {phase_idx + 1} summary failed: {exc}", file=sys.stderr)
+
+    if "xlsx" in summary_modes:
+        try:
+            report_path = base_path + "_report.xlsx"
+            generate_report(
+                phase_df, None, report_path,
+                stats=p_stats, recipe=mini_recipe, recipe_file=recipe_file,
+            )
+            print(f"Phase {phase_idx + 1} report: {report_path}")
+        except Exception as exc:
+            print(f"[WARN] Phase {phase_idx + 1} report failed: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="relational_matching",
@@ -261,7 +419,7 @@ def main() -> int:
         print(f"[profile] matching imports: {_ptime.time()-_t:.3f}s")
         _t = _ptime.time()
 
-    from report import generate_report
+    from report import generate_report  # noqa: F401 (pre-warm import for profiling)
     if _profile:
         print(f"[profile] report imports: {_ptime.time()-_t:.3f}s")
         _t = _ptime.time()
@@ -374,46 +532,66 @@ def main() -> int:
     print(f"  Matched:           {stats.get('matched_count', 'N/A')}")
     print(f"  Unmatched:         {stats.get('unmatched_count', 'N/A')}")
 
-    # Generate report
-    output_path = args.output
-    if output_path is None:
-        from datetime import datetime as _dt
-        recipe_name = recipe.get("name", "report").lower().replace(" ", "_")
-        recipe_name = "".join(c if c.isalnum() or c == "_" else "" for c in recipe_name)
-        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"output/{recipe_name}_{timestamp}.xlsx"
+    # --- Output generation ---
+    from datetime import datetime as _dt
 
-    # Ensure output directory exists
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+    mermaid_mode = getattr(args, "mermaid", "default")
+    is_multi_phase = "phases" in recipe
 
-    t_report = time.time()
-    report_path = generate_report(
-        result["matched"],
-        result["unmatched"],
-        output_path,
-        stats=stats,
-        recipe=recipe,
-        recipe_file=str(recipe_path.name),
-    )
-    print(f"Report saved: {report_path} ({time.time() - t_report:.2f}s)")
+    if is_multi_phase:
+        # Multi-phase: per-phase output (ADR-003)
+        phase_snapshots = result.get("phase_snapshots", [])
+        phase_stats_list = result.get("phases", [])
 
-    # Generate markdown summary alongside the report
-    try:
-        from summary import generate_summary
-        timing = result.get("timing")
-        mermaid_mode = getattr(args, "mermaid", "default")
-        summary_md = generate_summary(
-            recipe, stats, result["matched"], timing=timing,
-            mermaid=mermaid_mode,
+        for phase_idx, phase_cfg in enumerate(recipe["phases"]):
+            phase_output = phase_cfg.get("output")
+            if not phase_output or phase_idx >= len(phase_snapshots):
+                continue
+            phase_df = phase_snapshots[phase_idx]
+            if phase_df.height == 0:
+                print(f"Phase {phase_idx + 1}: skipped (empty)")
+                continue
+
+            _write_phase_output(
+                phase_cfg=phase_cfg,
+                phase_idx=phase_idx,
+                phase_df=phase_df,
+                phase_stats=phase_stats_list[phase_idx] if phase_idx < len(phase_stats_list) else {},
+                overall_stats=stats,
+                recipe=recipe,
+                recipe_file=str(recipe_path.name),
+                timestamp=timestamp,
+                mermaid_mode=mermaid_mode,
+            )
+    else:
+        # Single-phase: top-level output (backward compatible)
+        output_cfg = recipe.get("output", {})
+        output_path = args.output
+        if output_path is None:
+            recipe_name = recipe.get("name", "report").lower().replace(" ", "_")
+            recipe_name = "".join(c if c.isalnum() or c == "_" else "" for c in recipe_name)
+            from recipe import resolve_summary_modes
+            fmt = output_cfg.get("format", "xlsx")
+            summary_modes = resolve_summary_modes(output_cfg)
+            # Legacy xlsx report mode: keep .xlsx extension
+            if fmt == "xlsx" and "xlsx" in summary_modes:
+                ext = "xlsx"
+            else:
+                ext = fmt if fmt in ("csv", "parquet") else "xlsx"
+            output_path = f"output/{recipe_name}_{timestamp}.{ext}"
+
+        _write_output(
+            output_cfg=output_cfg,
+            matched_df=result["matched"],
+            unmatched_df=result["unmatched"],
+            output_path=output_path,
+            stats=stats,
+            recipe=recipe,
             recipe_file=str(recipe_path.name),
+            mermaid_mode=mermaid_mode,
+            timing=result.get("timing"),
         )
-        summary_path = report_path.replace(".xlsx", "_summary.md")
-        Path(summary_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(summary_path, "w") as f:
-            f.write(summary_md)
-        print(f"Summary saved: {summary_path}")
-    except Exception as exc:
-        print(f"[WARN] Summary generation failed: {exc}", file=sys.stderr)
 
     return 0
 

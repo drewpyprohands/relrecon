@@ -134,8 +134,26 @@ def validate_recipe(recipe: dict) -> list[str]:
                 else:
                     schema_errors.append(f"{path}: {err.message}")
             if schema_errors:
-                detail = "\n  ".join(schema_errors)
-                raise ValueError(f"Recipe schema validation failed:\n  {detail}")
+                # Improve opaque oneOf errors for output placement
+                improved = []
+                for e in schema_errors:
+                    if "is not valid under any of the given schemas" in e:
+                        if "phases" in recipe and "output" in recipe:
+                            improved.append(
+                                "Multi-phase recipes must not have a top-level "
+                                "'output'. Define output per-phase instead."
+                            )
+                        elif "phases" not in recipe and "output" not in recipe:
+                            improved.append(
+                                "Single-phase recipes require a top-level "
+                                "'output' block."
+                            )
+                        else:
+                            improved.append(e)
+                    else:
+                        improved.append(e)
+                detail = "\n  ".join(improved)
+                raise ValueError(f"Recipe validation failed:\n  {detail}")
 
     # Collect all critical errors, raise once at the end
     critical: list[str] = []
@@ -143,12 +161,58 @@ def validate_recipe(recipe: dict) -> list[str]:
     # Fallback for environments without jsonschema
     is_multi_phase = "phases" in recipe
     if is_multi_phase:
-        required = ["name", "sources", "phases", "output"]
+        required = ["name", "sources", "phases"]
     else:
         required = ["name", "sources", "populations", "steps", "output"]
     missing = [k for k in required if k not in recipe]
     if missing:
         critical.append(f"Recipe missing required fields: {missing}")
+
+    # Output placement rules (ADR-003)
+    if is_multi_phase:
+        if "output" in recipe:
+            critical.append(
+                "Multi-phase recipes must not have a top-level 'output'. "
+                "Define output per-phase instead."
+            )
+        phases_with_output = [
+            i for i, p in enumerate(recipe.get("phases", []))
+            if "output" in p
+        ]
+        if not phases_with_output and not missing:
+            critical.append(
+                "Multi-phase recipe has no output on any phase. "
+                "At least one phase must define an 'output' block."
+            )
+        else:
+            # Warn about phases without output
+            for i, p in enumerate(recipe.get("phases", [])):
+                if "output" not in p:
+                    pname = p.get("name", f"Phase {i + 1}")
+                    warnings.append(
+                        f"{pname} has no output block -- its results won't be exported"
+                    )
+
+    # Deprecation warnings
+    def _check_output_block(output_block: dict, label: str) -> None:
+        if "tabs" in output_block:
+            warnings.append(
+                f"{label}: 'tabs' is deprecated and ignored. "
+                "Tab generation is automatic (Summary + Matched + Analysis)."
+            )
+        if output_block.get("format") == "xlsx" and "summary" not in output_block:
+            warnings.append(
+                f"{label} has format: xlsx but no summary key. "
+                "Add summary: [md, xlsx] for a formatted report, "
+                "or summary: none to silence this warning."
+            )
+
+    if "output" in recipe:
+        _check_output_block(recipe["output"], "output")
+    for phase in recipe.get("phases", []):
+        pname = phase.get("name", "phase")
+        if "output" in phase:
+            _check_output_block(phase["output"], pname)
 
     for name, src in recipe.get("sources", {}).items():
         if "file" not in src and "loader" not in src:
@@ -437,7 +501,11 @@ def validate_fields(
         "reason_code", "rejection_step", "best_rejected_score",
     }
     # Dynamically add columns from recipe inherit[].as values
-    for step in recipe.get("steps", []):
+    all_recipe_steps = list(recipe.get("steps", []))
+    if not all_recipe_steps and "phases" in recipe:
+        for phase in recipe["phases"]:
+            all_recipe_steps.extend(phase.get("steps", []))
+    for step in all_recipe_steps:
         for inh in step.get("inherit", []):
             if "as" in inh:
                 known_derived.add(inh["as"])
@@ -457,16 +525,21 @@ def validate_fields(
                 )
             if "field" in entry:
                 f = entry["field"]
+                # _dst/_dst2 columns are created at runtime by joins
+                is_join_col = "_dst" in f
                 if f not in all_source_cols and f not in known_derived:
-                    errors.append(
-                        f'output.columns.{tab_key}: field "{f}" not found in '
-                        f"source data or known derived columns"
-                    )
+                    if is_join_col:
+                        pass  # skip -- runtime join column
+                    else:
+                        errors.append(
+                            f'output.columns.{tab_key}: field "{f}" not found in '
+                            f"source data or known derived columns"
+                        )
             if "fields" in entry:
                 for f in entry["fields"]:
-                    # Variant fields include _dst suffixed cols which won't
-                    # exist until after the join. Only warn on base names
-                    if not f.endswith("_dst") and f not in all_source_cols:
+                    # Variant fields include _dst/_dst2 suffixed cols which
+                    # won't exist until after the join. Only warn on base names
+                    if "_dst" not in f and f not in all_source_cols:
                         warnings.append(
                             f'output.columns.{tab_key}: variant field "{f}" '
                             f"not found in source data"
@@ -516,6 +589,12 @@ def format_validation_summary(
         lines.append(f"  {pop_name}: {row_count} rows{label}")
     lines.append("")
 
+    # Collect all populations config (for _previous_matched detection)
+    all_populations = recipe.get("populations", {})
+    if not all_populations and "phases" in recipe:
+        for phase in recipe["phases"]:
+            all_populations.update(phase.get("populations", {}))
+
     lines.append("Field validation:")
     all_steps = recipe.get("steps", [])
     if not all_steps and "phases" in recipe:
@@ -532,11 +611,25 @@ def format_validation_summary(
         if dst_df is None and dst_pop in sources:
             dst_df = sources[dst_pop]
 
+        # Track whether populations come from _previous_matched
+        src_is_runtime = all_populations.get(src_pop, {}).get("source") == "_previous_matched"
+        dst_is_runtime = all_populations.get(dst_pop, {}).get("source") == "_previous_matched"
+
         for mf in step.get("match_fields", []):
-            s_ok = src_df is not None and mf["source"] in src_df.columns
-            d_ok = dst_df is not None and mf["destination"] in dst_df.columns
-            lines.append(f"    match_fields.source: {mf['source']} {'✅' if s_ok else '❌'}")
-            lines.append(f"    match_fields.destination: {mf['destination']} {'✅' if d_ok else '❌'}")
+            if src_is_runtime:
+                s_mark = "⏭️ (runtime)"
+            elif src_df is not None and mf["source"] in src_df.columns:
+                s_mark = "✅"
+            else:
+                s_mark = "❌"
+            if dst_is_runtime:
+                d_mark = "⏭️ (runtime)"
+            elif dst_df is not None and mf["destination"] in dst_df.columns:
+                d_mark = "✅"
+            else:
+                d_mark = "❌"
+            lines.append(f"    match_fields.source: {mf['source']} {s_mark}")
+            lines.append(f"    match_fields.destination: {mf['destination']} {d_mark}")
 
         if "address_support" in step:
             ac = step["address_support"]
@@ -588,3 +681,21 @@ def format_validation_summary(
         lines.append("\n❌ Critical errors found. Pipeline will not run.")
 
     return "\n".join(lines)
+
+
+def resolve_summary_modes(output_cfg: dict) -> list[str]:
+    """Resolve the summary modes from an output config block.
+
+    Returns a list of enabled summary modes (subset of ['md', 'xlsx']).
+    No implicit defaults -- omitting summary key means no summary.
+    """
+    raw = output_cfg.get("summary")
+    if raw is None:
+        return []
+    if raw == "none":
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [m for m in raw if m in ("md", "xlsx")]
+    return []
