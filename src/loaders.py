@@ -75,7 +75,6 @@ def _cache_key(source_config: dict) -> str:
         "connection": conn,
         "query": source_config.get("query", ""),
         "url": source_config.get("url", ""),
-        "columns": source_config.get("columns", []),
         "url_from": source_config.get("url_from", {}),
     }, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:8]
@@ -210,6 +209,9 @@ def load_sql(source_config: dict, base_dir: str = ".",
 
     cached = _read_cache(config, base_dir, recipe_name, source_name)
     if cached is not None:
+        columns = config.get("columns")
+        if columns:
+            cached = cached.select(columns)
         return cached
 
     if driver == "sqlite":
@@ -225,6 +227,11 @@ def load_sql(source_config: dict, base_dir: str = ".",
         )
 
     _write_cache(df, config, base_dir, recipe_name, source_name)
+
+    columns = config.get("columns")
+    if columns:
+        df = df.select(columns)
+
     return df
 
 
@@ -408,15 +415,19 @@ def load_http(source_config: dict, base_dir: str = ".",
 
     cached = _read_cache(config, base_dir, recipe_name, source_name)
     if cached is not None:
+        columns = config.get("columns")
+        if columns:
+            cached = cached.select(columns)
         return cached
 
     df = _fetch_and_parse(config, base_dir)
+
+    _write_cache(df, config, base_dir, recipe_name, source_name)
 
     columns = config.get("columns")
     if columns:
         df = df.select(columns)
 
-    _write_cache(df, config, base_dir, recipe_name, source_name)
     return df
 
 

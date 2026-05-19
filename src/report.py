@@ -360,13 +360,7 @@ def run_and_report(recipe_path: str, base_dir: str = ".",
 
 
 def write_raw_data(df, path: str, fmt: str):
-    """Write a DataFrame as raw data (no summary tab, no formatting).
-
-    Args:
-        df: Polars DataFrame to write
-        path: Output file path
-        fmt: Format string ('csv', 'xlsx', or 'parquet')
-    """
+    """Write a DataFrame as raw data (csv, xlsx, or parquet)."""
     if fmt == "csv":
         df.write_csv(path)
     elif fmt == "xlsx":

@@ -2,7 +2,7 @@
 Core matching engine. ADR Option C aligned.
 
 Uses Polars for all data ops (joins, filtering, expressions).
-Uses RapidFuzz process.cdist for batch fuzzy matching (full C++ matrix).
+Uses RapidFuzz process.cdist for batch fuzzy matching (chunked to bound memory).
 No Python row-level loops for matching. Vectorized throughout.
 Address scoring uses RapidFuzz batch ops where possible.
 """
@@ -18,6 +18,11 @@ from rapidfuzz import process as rprocess
 
 from address import score_address_multi_tier
 from normalize import clean, normalized
+
+# Max source rows per cdist chunk. Controls peak memory:
+# chunk_size x dest_rows x 4 bytes (float32).
+# 1000 x 3.3M = ~12.5 GB. Adjust down for constrained environments.
+_CDIST_CHUNK_SIZE = 1000
 
 
 def _next_dst_suffix(current: str) -> str:
@@ -181,13 +186,9 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                       stopwords: list = None,
                       dedup_field: str = None,
                       exclude_self_key: str = None) -> pl.DataFrame:
-    """Fuzzy name matching via RapidFuzz cdist (full C++ matrix, no Python loops).
+    """Fuzzy name matching via RapidFuzz cdist (chunked to bound memory).
 
-    For each tier, builds match-key columns (same as exact), then uses
-    RapidFuzz cdist to compute the full score matrix in C++. Extracts
-    the best match per source row above threshold.
-    Tries tiers in order; deduplicates by tier priority (earlier tier wins),
-    then by highest score within tier.
+    Tries tiers in order, deduplicates by tier priority (earlier wins).
 
     Returns matched DataFrame with name_score column (0-100).
     """
@@ -226,32 +227,61 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         if not dst_keys or not src_keys:
             continue
 
-        # workers=-1 uses all available cores
-        score_matrix = rprocess.cdist(
-            src_keys, dst_keys,
-            scorer=scorer_fn, score_cutoff=threshold,
-            dtype=np.float32, workers=-1,
-        )
-
-        # Exclude self-matches for same-population matching
+        # Pre-extract self-match keys if needed (once, not per chunk)
+        dst_self_keys = None
         if exclude_self_key:
-            src_self = src[exclude_self_key].cast(pl.String).fill_null("").to_numpy()
-            dst_self = dst[exclude_self_key].cast(pl.String).fill_null("").to_numpy()
-            # Boolean mask: True where src key == dst key (self-match)
-            self_mask = src_self[:, None] == dst_self[None, :]
-            score_matrix[self_mask] = 0.0
+            dst_self_keys = dst[exclude_self_key].cast(pl.String).fill_null("").to_numpy()
 
-        best_dst_idxs = score_matrix.argmax(axis=1)
-        best_scores = score_matrix[np.arange(len(src_keys)), best_dst_idxs]
+        # Chunk source rows to bound memory: chunk_size x M x 4 bytes
+        # Default 1000 rows -- at 3.3M dest cols that's ~12.5 GB per chunk
+        chunk_size = _CDIST_CHUNK_SIZE
+        all_src_idxs = []
+        all_dst_idxs = []
+        all_scores = []
 
-        # cdist sets below-threshold scores to 0
-        mask = best_scores >= threshold
-        if not mask.any():
+        for chunk_start in range(0, len(src_keys), chunk_size):
+            chunk_end = min(chunk_start + chunk_size, len(src_keys))
+            chunk_keys = src_keys[chunk_start:chunk_end]
+
+            score_matrix = rprocess.cdist(
+                chunk_keys, dst_keys,
+                scorer=scorer_fn, score_cutoff=threshold,
+                dtype=np.float32, workers=-1,
+            )
+
+            # Exclude self-matches for same-population matching
+            if exclude_self_key and dst_self_keys is not None:
+                src_self_chunk = (
+                    src[exclude_self_key]
+                    .cast(pl.String).fill_null("")
+                    .to_numpy()[chunk_start:chunk_end]
+                )
+                self_mask = src_self_chunk[:, None] == dst_self_keys[None, :]
+                score_matrix[self_mask] = 0.0
+
+            best_dst_idxs_chunk = score_matrix.argmax(axis=1)
+            best_scores_chunk = score_matrix[
+                np.arange(len(chunk_keys)), best_dst_idxs_chunk
+            ]
+
+            # cdist sets below-threshold scores to 0
+            mask = best_scores_chunk >= threshold
+            if mask.any():
+                # Offset source indices back to global positions
+                src_hits = np.where(mask)[0] + chunk_start
+                all_src_idxs.extend(src_hits.tolist())
+                all_dst_idxs.extend(best_dst_idxs_chunk[mask].tolist())
+                all_scores.extend(best_scores_chunk[mask].tolist())
+
+            # Free chunk memory immediately
+            del score_matrix
+
+        if not all_src_idxs:
             continue
 
-        src_idxs = np.where(mask)[0].tolist()
-        dst_idxs = best_dst_idxs[mask].tolist()
-        scores = best_scores[mask].tolist()
+        src_idxs = all_src_idxs
+        dst_idxs = all_dst_idxs
+        scores = all_scores
 
         matched_src = src[src_idxs].drop("_match_key")
         matched_dst = dst[dst_idxs].drop("_match_key")
