@@ -1,0 +1,65 @@
+name: Tie-Breaker Example
+description: >
+  Demonstrates tie-breaker selection. Source records match multiple
+  destination records with the same name. The tie-breaker selects the
+  match with the lowest Supplier ID by stripping the alpha prefix and
+  sorting numerically. Expected: V001 -> D002 (S1013), V002 -> D005 (S1500).
+
+sources:
+  source_data:
+    file: tie_breaker_test.csv
+    type: multi_population
+  dest_data:
+    file: tie_breaker_dest.csv
+    type: trusted_reference
+
+populations:
+  source_pop:
+    source: source_data
+    record_key: vendor_id
+    filter: []
+
+steps:
+  - name: Exact Name Match
+    source: source_pop
+    destination: dest_data
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dest_name
+        method: exact
+        tiers: [raw]
+    inherit:
+      - source: supplier_id
+        as: derived_supplier_id
+
+output:
+  format: xlsx
+  summary: [md, xlsx]
+  match_mode: best_match
+  tie_breaker:
+    column: supplier_id
+    strip_prefix: alpha
+    order: asc
+  columns:
+    matched:
+      - field: vendor_id
+        header: Source ID
+      - field: l3_fmly_nm
+        header: Source Name
+      - field: dest_id
+        header: Dest ID
+      - field: dest_name
+        header: Dest Name
+      - field: derived_supplier_id
+        header: Supplier ID (selected)
+      - field: match_step
+        header: Match Step
+      - field: match_tier
+        header: Tier
+    analysis:
+      - field: vendor_id
+        header: Source ID
+      - field: l3_fmly_nm
+        header: Source Name
+      - field: reason_code
+        header: Reason

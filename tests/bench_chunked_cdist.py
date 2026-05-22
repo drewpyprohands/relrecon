@@ -265,8 +265,8 @@ def bench_existing_recipes():
 
     import subprocess
     recipes = [
-        ("gleif_parent_lookup_test", "config/recipes/gleif_parent_lookup_test.yaml"),
-        ("same_pop_example", "config/recipes/same_pop_example.yaml"),
+        ("gleif_parent_lookup_test", "tests/recipes/gleif_parent_lookup_test.yaml"),
+        ("same_pop_example", "tests/recipes/same_pop_example.yaml"),
     ]
 
     base = os.path.join(os.path.dirname(__file__), "..")

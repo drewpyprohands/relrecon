@@ -193,6 +193,42 @@ def validate_recipe(recipe: dict) -> list[str]:
                         f"{pname} has no output block -- its results won't be exported"
                     )
 
+    # Enrichment mode validation
+    source_names = set(recipe.get("sources", {}).keys())
+    for phase in recipe.get("phases", []):
+        pname = phase.get("name", "phase")
+        pout = phase.get("output", {})
+        if pout.get("mode") == "enriched":
+            if not pout.get("enrich_source"):
+                critical.append(
+                    f"{pname}: mode=enriched requires 'enrich_source' "
+                    f"(which source dataset to enrich)"
+                )
+            elif pout["enrich_source"] not in source_names:
+                critical.append(
+                    f"{pname}: enrich_source '{pout['enrich_source']}' "
+                    f"not found in sources. Available: {sorted(source_names)}"
+                )
+            if not pout.get("enrich_key"):
+                critical.append(
+                    f"{pname}: mode=enriched requires 'enrich_key' "
+                    f"(join column between source and matched results)"
+                )
+    if "output" in recipe and recipe["output"].get("mode") == "enriched":
+        if not recipe["output"].get("enrich_source"):
+            critical.append(
+                "output: mode=enriched requires 'enrich_source'"
+            )
+        elif recipe["output"]["enrich_source"] not in source_names:
+            critical.append(
+                f"output: enrich_source '{recipe['output']['enrich_source']}' "
+                f"not found in sources. Available: {sorted(source_names)}"
+            )
+        if not recipe["output"].get("enrich_key"):
+            critical.append(
+                "output: mode=enriched requires 'enrich_key'"
+            )
+
     # Deprecation warnings
     def _check_output_block(output_block: dict, label: str) -> None:
         if "tabs" in output_block:

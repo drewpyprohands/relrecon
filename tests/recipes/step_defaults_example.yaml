@@ -1,14 +1,17 @@
-# L1 Reconciliation -- 80% Target
+# Step Defaults Example
 #
-# 4-step matching against pop3 only (no core_parent fallback).
-# Uses street_weight=0.75 for address scoring to emphasize street
-# name matches over city/state. Produces ~80% match rate (36/45).
+# Demonstrates the step_defaults feature: define address_support and
+# inherit blocks once at the top level instead of repeating them in
+# every step. Steps inherit these defaults unless they provide a local
+# override (see Step 5 -- core_parent has different column names).
 #
-# For a version with core_parent fallback (84%), see
-# tests/recipes/step_defaults_example.yaml.
+# Compare with l1_recon_80.yaml which uses the same matching logic
+# but repeats address_support/inherit in every step.
 
-name: L1 Reconc Rollup 80 All
-description: Reconcile Pop1 parent IDs to trusted L1 records
+name: L1 Reconc Rollup 80 (step_defaults)
+description: >-
+  Reconcile Pop1 parent IDs to trusted L1 records.
+  Same as l1_recon_80 but uses step_defaults to reduce repetition.
 
 sources:
   core_parent:
@@ -30,6 +33,32 @@ populations:
     source: multi_pop
     filter: []
 
+step_defaults:
+  address_support:
+    source: [hq_addr1, hq_addr2]
+    destination: [hq_addr1, hq_addr2]
+    parser: auto
+    tiers: [clean]
+    weights:
+      street_name: 0.75
+  inherit:
+    - source: l1_fmly_nm
+      as: derived_l1_name
+    - source: tpty_l1_id
+      as: derived_l1_id
+    - source: l3_fmly_nm
+      as: derived_l3_name
+    - source: vendor_id
+      as: derived_l3_id
+    - source: cntrct_cmpl_dt
+      as: derived_cntrc_cmpl_dt
+    - source: hq_addr1
+      as: derived_hq_addr1
+    - source: hq_addr2
+      as: derived_hq_addr2
+    - source: tpty_assm_nm
+      as: derived_assm_nm
+
 steps:
   - name: Exact Match Pop1 L3 to Pop3 L3
     source: pop1
@@ -40,30 +69,7 @@ steps:
         method: exact
         tiers: [raw, clean, normalized]
     address_support:
-      source: [hq_addr1, hq_addr2]
-      destination: [hq_addr1, hq_addr2]
-      parser: auto
-      tiers: [clean]
       threshold: 75
-      weights:
-        street_name: 0.75
-    inherit:
-      - source: l1_fmly_nm
-        as: derived_l1_name
-      - source: tpty_l1_id
-        as: derived_l1_id
-      - source: l3_fmly_nm
-        as: derived_l3_name
-      - source: vendor_id
-        as: derived_l3_id
-      - source: cntrct_cmpl_dt
-        as: derived_cntrc_cmpl_dt
-      - source: hq_addr1
-        as: derived_hq_addr1
-      - source: hq_addr2
-        as: derived_hq_addr2
-      - source: tpty_assm_nm
-        as: derived_assm_nm
 
   - name: Exact Match Pop1 L1 to Pop3 L1
     source: pop1
@@ -73,30 +79,6 @@ steps:
         destination: l1_fmly_nm
         method: exact
         tiers: [raw, clean, normalized]
-    address_support:
-      source: [hq_addr1, hq_addr2]
-      destination: [hq_addr1, hq_addr2]
-      parser: auto
-      tiers: [clean]
-      weights:
-        street_name: 0.75
-    inherit:
-      - source: l1_fmly_nm
-        as: derived_l1_name
-      - source: tpty_l1_id
-        as: derived_l1_id
-      - source: l3_fmly_nm
-        as: derived_l3_name
-      - source: vendor_id
-        as: derived_l3_id
-      - source: cntrct_cmpl_dt
-        as: derived_cntrc_cmpl_dt
-      - source: hq_addr1
-        as: derived_hq_addr1
-      - source: hq_addr2
-        as: derived_hq_addr2
-      - source: tpty_assm_nm
-        as: derived_assm_nm
 
   # Fuzzy steps run AFTER exact -- pipeline dedup prefers earlier steps
   - name: Fuzzy Match Pop1 L3 to Pop3 L3
@@ -109,30 +91,6 @@ steps:
         threshold: 75
         scorer: token_sort_ratio
         tiers: [raw, clean, normalized]
-    address_support:
-      source: [hq_addr1, hq_addr2]
-      destination: [hq_addr1, hq_addr2]
-      parser: auto
-      tiers: [clean]
-      weights:
-        street_name: 0.75
-    inherit:
-      - source: l1_fmly_nm
-        as: derived_l1_name
-      - source: tpty_l1_id
-        as: derived_l1_id
-      - source: l3_fmly_nm
-        as: derived_l3_name
-      - source: vendor_id
-        as: derived_l3_id
-      - source: cntrct_cmpl_dt
-        as: derived_cntrc_cmpl_dt
-      - source: hq_addr1
-        as: derived_hq_addr1
-      - source: hq_addr2
-        as: derived_hq_addr2
-      - source: tpty_assm_nm
-        as: derived_assm_nm
 
   - name: Fuzzy Match Pop1 L1 to Pop3 L1
     source: pop1
@@ -144,29 +102,33 @@ steps:
         threshold: 75
         scorer: token_sort_ratio
         tiers: [raw, clean, normalized]
-    address_support:
-      source: [hq_addr1, hq_addr2]
-      destination: [hq_addr1, hq_addr2]
-      parser: auto
-      tiers: [clean]
-      weights:
-        street_name: 0.75
-    inherit:
-      - source: l1_fmly_nm
-        as: derived_l1_name
-      - source: tpty_l1_id
-        as: derived_l1_id
+
+  - name: Exact Match Pop1 L3 to core_parent
+    source: pop1
+    destination: core_parent
+    match_fields:
       - source: l3_fmly_nm
+        destination: Vendor Name
+        method: exact
+        tiers: [raw, clean, normalized]
+    address_support:
+      destination: [Address1, Address2]  # different dest columns than pop3
+    inherit:  # local override -- core_parent has different column names
+      - source: Supplier Name
+        as: derived_l1_name
+      - source: Supplier ID
+        as: derived_l1_id
+      - source: Vendor Name
         as: derived_l3_name
-      - source: vendor_id
+      - source: Vendor ID
         as: derived_l3_id
-      - source: cntrct_cmpl_dt
+      - source: Updated
         as: derived_cntrc_cmpl_dt
-      - source: hq_addr1
+      - source: Address1
         as: derived_hq_addr1
-      - source: hq_addr2
+      - source: Address2
         as: derived_hq_addr2
-      - source: tpty_assm_nm
+      - source: Supplier Status
         as: derived_assm_nm
 
 output:
@@ -197,7 +159,7 @@ output:
         header: Dest L3 ID
       - field: derived_l3_name
         header: Dest L3 Name
-      ## Source L1 to Dest L1      
+      ## Source L1 to Dest L1
       - field: l1_fmly_nm
         header: Source L1 Name
       - field: tpty_l1_id
@@ -243,7 +205,7 @@ output:
         header: Rejection Step
       - field: best_rejected_score
         header: Best Rejected Score
-      # L3 
+      # L3
       - field: vendor_id
         header: L3 ID
       - field: l3_fmly_nm

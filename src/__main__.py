@@ -189,6 +189,51 @@ def _write_output(
             print(f"[WARN] Report generation failed: {exc}", file=sys.stderr)
 
 
+
+def _build_enriched_output(
+    recipe: dict,
+    output_cfg: dict,
+    matched_df,
+    data_dir: str,
+    label: str = "output",
+):
+    """Load enrichment source and join matched results onto it.
+
+    Returns (enriched_df, matched_count).
+    Raises RecipeValidationError on config errors, ValueError on join issues.
+    """
+    from recipe import RecipeValidationError, load_source
+
+    source_name = output_cfg.get("enrich_source", "")
+    enrich_key = output_cfg.get("enrich_key", "")
+
+    if not source_name:
+        raise RecipeValidationError(
+            f"{label}: mode=enriched requires 'enrich_source'"
+        )
+    if not enrich_key:
+        raise RecipeValidationError(
+            f"{label}: mode=enriched requires 'enrich_key'"
+        )
+
+    source_cfg = recipe.get("sources", {}).get(source_name)
+    if source_cfg is None:
+        available = list(recipe.get("sources", {}).keys())
+        raise RecipeValidationError(
+            f"{label}: enrich_source '{source_name}' not found. "
+            f"Available: {available}"
+        )
+
+    source_df = load_source(
+        source_cfg, data_dir,
+        recipe_name=recipe.get("name", ""),
+        source_name=source_name,
+    )
+
+    from report import enrich_join
+    return enrich_join(source_df, matched_df, enrich_key)
+
+
 def _write_phase_output(
     phase_cfg: dict,
     phase_idx: int,
@@ -551,7 +596,18 @@ def main() -> int:
             if not phase_output or phase_idx >= len(phase_snapshots):
                 continue
             phase_df = phase_snapshots[phase_idx]
-            if phase_df.height == 0:
+
+            # Enriched output mode: left-join match results onto full source
+            if phase_output.get("mode") == "enriched":
+                phase_df, matched_count = _build_enriched_output(
+                    recipe, phase_output, phase_df, str(data_dir),
+                    label=f"Phase {phase_idx + 1}",
+                )
+                print(
+                    f"Phase {phase_idx + 1}: enriched output "
+                    f"({phase_df.height} source rows, {matched_count} matched)"
+                )
+            elif phase_df.height == 0:
                 print(f"Phase {phase_idx + 1}: skipped (empty)")
                 continue
 
@@ -560,7 +616,7 @@ def main() -> int:
                 phase_cfg=phase_cfg,
                 phase_idx=phase_idx,
                 phase_df=phase_df,
-                phase_unmatched_df=p_unmatched,
+                phase_unmatched_df=p_unmatched if phase_output.get("mode") != "enriched" else None,
                 phase_stats=phase_stats_list[phase_idx] if phase_idx < len(phase_stats_list) else {},
                 overall_stats=stats,
                 recipe=recipe,
@@ -571,6 +627,21 @@ def main() -> int:
     else:
         # Single-phase: top-level output (backward compatible)
         output_cfg = recipe.get("output", {})
+
+        # Enriched mode for single-phase
+        if output_cfg.get("mode") == "enriched":
+            enriched_df, matched_count = _build_enriched_output(
+                recipe, output_cfg, result["matched"], str(data_dir),
+                label="output",
+            )
+            print(
+                f"Enriched output: {enriched_df.height} source rows, "
+                f"{matched_count} matched"
+            )
+            result = dict(result)
+            result["matched"] = enriched_df
+            result["unmatched"] = None
+
         output_path = args.output
         if output_path is None:
             recipe_name = recipe.get("name", "report").lower().replace(" ", "_")
@@ -588,7 +659,7 @@ def main() -> int:
         _write_output(
             output_cfg=output_cfg,
             matched_df=result["matched"],
-            unmatched_df=result["unmatched"],
+            unmatched_df=result.get("unmatched"),
             output_path=output_path,
             stats=stats,
             recipe=recipe,
