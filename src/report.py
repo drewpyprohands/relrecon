@@ -429,3 +429,44 @@ def apply_column_mapping(df, output_cfg: dict):
     if rename_map:
         df = df.rename(rename_map)
     return df
+
+
+def enrich_join(source_df, matched_df, enrich_key: str):
+    """Left-join matched results onto a source dataset for enriched output.
+
+    Every source row appears in output. Matched rows get enrichment
+    columns (columns in matched_df not in source_df) populated;
+    unmatched rows get null.
+
+    Returns (enriched_df, matched_count).
+    Raises ValueError if enrich_key is missing from either DataFrame.
+    """
+    if enrich_key not in source_df.columns:
+        raise ValueError(
+            f"enrich_key '{enrich_key}' not found in enrichment source. "
+            f"Available: {source_df.columns[:10]}"
+        )
+
+    matched_count = matched_df.height
+
+    if matched_df.height == 0:
+        return source_df, 0
+
+    if enrich_key not in matched_df.columns:
+        raise ValueError(
+            f"enrich_key '{enrich_key}' not found in matched results. "
+            f"Available: {matched_df.columns[:10]}"
+        )
+
+    # Only bring in columns that don't already exist in the source
+    enrichment_cols = [
+        c for c in matched_df.columns if c not in source_df.columns
+    ]
+    if not enrichment_cols:
+        return source_df, matched_count
+
+    enrich_df = matched_df.select([enrich_key] + enrichment_cols)
+    enrich_df = enrich_df.unique(subset=[enrich_key], keep="first")
+
+    enriched = source_df.join(enrich_df, on=enrich_key, how="left")
+    return enriched, matched_count

@@ -1,0 +1,129 @@
+# GLEIF LEI Enrichment Test
+#
+# Enriches the full GLEIF LEI dataset with parent relationship data.
+# Output is the COMPLETE LEI source with two added columns:
+#   - gleif_parent_lei: parent LEI from RR (null if no relationship)
+#   - gleif_parent_name: parent legal name resolved from LEI (null if no relationship)
+#
+# This tests the "enriched" output mode where ALL source rows appear
+# in output -- matched rows get enrichment columns populated,
+# unmatched rows get nulls. No matched/unmatched split.
+#
+# Expected behavior with test data (19 LEI records):
+#   - 6 LEIs have a real parent (different LEI): enrichment columns populated
+#   - 7 LEIs have self-referencing parent: enrichment columns populated (self)
+#   - 6 LEIs have no RR record: enrichment columns null
+#   - Output: 19 rows total (every LEI row)
+#
+# Uses local test data (no GLEIF download).
+
+name: GLEIF LEI Enrichment Test
+description: >
+  Enrich full GLEIF LEI dataset with parent LEI and parent name
+  from RR relationship records. Output includes all LEI rows
+  regardless of whether a parent relationship exists.
+
+sources:
+  gleif_lei:
+    file: gleif_lei_test.csv
+
+  gleif_rr:
+    file: gleif_rr_test.csv
+
+# Two-phase pipeline:
+#   Phase 1: Match LEI against RR to find parent LEI
+#   Phase 2: Resolve parent LEI back to parent name in LEI dataset
+
+phases:
+  - name: "Phase 1: Match LEI to parent relationship in RR"
+    populations:
+      lei_entities:
+        source: gleif_lei
+        record_key: LEI
+        filter:
+          - field: Entity.EntityStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "ISSUED"
+      rr_direct_parents:
+        source: gleif_rr
+        record_key: Relationship.StartNode.NodeID
+        filter:
+          - field: Relationship.RelationshipType
+            op: eq
+            value: "IS_DIRECTLY_CONSOLIDATED_BY"
+          - field: Relationship.RelationshipStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Relationship.EndNode.NodeIDType
+            op: eq
+            value: "LEI"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "PUBLISHED"
+    steps:
+      - name: Match LEI to parent relationship
+        source: lei_entities
+        destination: rr_direct_parents
+        match_fields:
+          - source: LEI
+            destination: Relationship.StartNode.NodeID
+            method: exact
+            tiers: [raw]
+
+  - name: "Phase 2: Resolve parent LEI to parent name"
+    populations:
+      matched_with_parent:
+        source: _previous_matched
+        record_key: Relationship.EndNode.NodeID
+        filter: []
+      gleif_entities:
+        source: gleif_lei
+        record_key: LEI
+        filter:
+          - field: Entity.EntityStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "ISSUED"
+    steps:
+      - name: Resolve parent LEI to entity name
+        source: matched_with_parent
+        destination: gleif_entities
+        match_fields:
+          - source: Relationship.EndNode.NodeID
+            destination: LEI
+            method: exact
+            tiers: [raw]
+        inherit:
+          - source: Entity.LegalName
+            as: gleif_parent_name
+
+    # ENRICHED OUTPUT: left-join match results back onto the full LEI source.
+    # Every row from gleif_lei appears in the output. Rows that matched
+    # get gleif_parent_lei and gleif_parent_name populated; others get null.
+    output:
+      mode: enriched
+      enrich_source: gleif_lei
+      enrich_key: LEI
+      format: csv
+      summary: md
+      columns:
+        matched:
+          - field: LEI
+            header: LEI
+          - field: Entity.LegalName
+            header: Legal Name
+          - field: Entity.LegalAddress.Country
+            header: Country
+          - field: Entity.EntityStatus
+            header: Entity Status
+          - field: Registration.RegistrationStatus
+            header: Registration Status
+          - field: Relationship.EndNode.NodeID
+            header: Parent LEI
+          - field: gleif_parent_name
+            header: Parent Name

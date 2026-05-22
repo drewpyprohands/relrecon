@@ -71,6 +71,22 @@ When `path` is omitted, auto-generated from recipe/phase name + timestamp.
 
 When only summary is configured (no `format`), summary files are generated from the phase name.
 
+## Enriched Output Mode (Extension)
+
+**Added:** 2026-05-21
+
+A phase (or single-phase recipe) can set `mode: enriched` to left-join match results onto a full source dataset instead of splitting into matched/unmatched. Every source row appears in output -- matched rows get enrichment columns populated, unmatched rows get null.
+
+```yaml
+output:
+  mode: enriched
+  enrich_source: gleif_lei
+  enrich_key: LEI
+  format: csv
+```
+
+This is still per-phase output -- it uses that phase's match results, not data from other phases. The enrichment is a post-processing transform in the output layer (`enrich_join()` in `report.py`, `_build_enriched_output()` in `__main__.py`). The matching engine is unmodified.
+
 ## Consequences
 
 - Single-phase recipes work identically to before (backward compatible)
@@ -78,3 +94,4 @@ When only summary is configured (no `format`), summary files are generated from 
 - Each phase's output is self-contained -- Phase 2 output only contains Phase 2 data (plus whatever was inherited via `_previous_matched`)
 - Users can produce raw CSV for warehouse import and formatted XLSX report from the same phase
 - Summary stats are phase-specific (not combined pipeline stats)
+- Enriched mode produces a single merged dataset (no matched/unmatched split)

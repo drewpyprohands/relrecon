@@ -1,16 +1,11 @@
-# GLEIF Parent Lookup -- Multi-Output Test
+# GLEIF Parent Lookup - Test variant (local CSV files)
 #
-# Same 3-phase pipeline as gleif_parent_lookup_test.yaml but with
-# output blocks on Phase 1 and Phase 3. Phase 2 has no output
-# (intermediate join, nothing useful to export).
-#
-# Phase 1 output: vendor-to-LEI matches + unmatched vendors (analysis)
-# Phase 3 output: full rollup with parent resolution
-#
-# Uses local test CSV files (no HTTP/GLEIF download needed).
+# Same pipeline as gleif_parent_lookup.yaml but uses small local test
+# datasets instead of downloading from GLEIF. Used for CI testing.
 
-name: GLEIF Multi-Output Test
-description: Test multi-phase pipeline with per-phase output blocks
+name: GLEIF Parent Lookup Test (Multi-Phase)
+description: >
+  Test variant of GLEIF parent lookup using local CSV test data.
 
 sources:
   vendors:
@@ -57,40 +52,6 @@ phases:
             method: fuzzy
             threshold: 88
             tiers: [clean, normalized]
-    output:
-      format: csv
-      summary: [md, xlsx]
-      columns:
-        matched:
-          - field: Vendor ID
-            header: Vendor ID
-          - field: Vendor Name
-            header: Vendor Name
-          - field: Country
-            header: Vendor Country
-          - field: LEI
-            header: Matched LEI
-          - field: Entity.LegalName
-            header: GLEIF Legal Name
-          - field: Entity.LegalAddress.Country
-            header: Entity Country
-          - field: match_step
-            header: Match Method
-          - field: match_tier
-            header: Match Tier
-          - field: name_score
-            header: Match Score
-        analysis:
-          - field: Vendor ID
-            header: Vendor ID
-          - field: Vendor Name
-            header: Vendor Name
-          - field: Country
-            header: Vendor Country
-          - field: Internal Parent
-            header: Internal Parent (Expected)
-          - field: reason_code
-            header: Unmatched Reason
 
   - name: "Phase 2: Resolve parent LEI from RR"
     populations:
@@ -174,6 +135,10 @@ phases:
             header: Matched LEI
           - field: Entity.LegalName
             header: GLEIF Legal Name
+          - field: Entity.LegalAddress.Country
+            header: Entity Country
+          - field: Entity.EntityStatus
+            header: Entity Status
           - field: Relationship.EndNode.NodeID
             header: Parent LEI
           - field: parent_legal_name
@@ -199,3 +164,7 @@ phases:
             header: Internal Parent (Expected)
           - field: reason_code
             header: Unmatched Reason
+          - field: rejection_step
+            header: Rejected At Step
+          - field: best_rejected_score
+            header: Best Rejected Score

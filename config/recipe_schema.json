@@ -526,6 +526,20 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["matched", "enriched"],
+          "default": "matched",
+          "description": "Output mode. 'matched' (default) splits into matched/unmatched. 'enriched' left-joins match results onto the full source dataset -- every source row appears, with enrichment columns null where no match."
+        },
+        "enrich_source": {
+          "type": "string",
+          "description": "Source name to use as enrichment base (required when mode=enriched). All rows from this source appear in output."
+        },
+        "enrich_key": {
+          "type": "string",
+          "description": "Column in the enrichment source to join on (required when mode=enriched). Must exist in both the source and the matched results."
+        },
         "format": {
           "type": "string",
           "enum": [

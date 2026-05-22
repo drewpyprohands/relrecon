@@ -1,0 +1,212 @@
+# GLEIF Parent Lookup - Per-Phase Output Test
+#
+# Tests per-phase output modes (ADR-003) with local test data:
+#   Phase 1: CSV data + markdown summary (vendor-LEI reconciliation)
+#   Phase 2: raw XLSX data only (intermediate relationship mapping)
+#   Phase 3: CSV data + both md and xlsx summary (final deliverable)
+
+name: GLEIF Parent Phased Test
+description: >
+  Per-phase output demo. Phase 1 exports vendor-LEI reconciliation as CSV
+  with markdown summary. Phase 2 exports relationship matches as raw XLSX.
+  Phase 3 exports final results as CSV with full reporting (md + xlsx).
+
+sources:
+  vendors:
+    file: gleif_test_vendors.csv
+
+  gleif_lei:
+    file: gleif_lei_test.csv
+
+  gleif_rr:
+    file: gleif_rr_test.csv
+
+phases:
+  - name: "Phase 1: Match vendors to LEI"
+    populations:
+      vendor_pop:
+        source: vendors
+        record_key: Vendor ID
+        filter: []
+      gleif_active:
+        source: gleif_lei
+        record_key: LEI
+        filter:
+          - field: Entity.EntityStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "ISSUED"
+    steps:
+      - name: Exact vendor name to LEI
+        source: vendor_pop
+        destination: gleif_active
+        match_fields:
+          - source: Vendor Name
+            destination: Entity.LegalName
+            method: exact
+            tiers: [raw, clean, normalized]
+      - name: Fuzzy vendor name to LEI
+        source: vendor_pop
+        destination: gleif_active
+        match_fields:
+          - source: Vendor Name
+            destination: Entity.LegalName
+            method: fuzzy
+            threshold: 88
+            tiers: [clean, normalized]
+    output:
+      format: csv
+      summary: md
+      columns:
+        matched:
+          - field: Vendor ID
+            header: Vendor ID
+          - field: Vendor Name
+            header: Vendor Name
+          - field: Country
+            header: Vendor Country
+          - field: LEI
+            header: Matched LEI
+          - field: Entity.LegalName
+            header: GLEIF Legal Name
+          - field: Entity.LegalAddress.Country
+            header: Entity Country
+          - field: match_step
+            header: Match Method
+          - field: match_tier
+            header: Match Tier
+          - field: name_score
+            header: Match Score
+
+  - name: "Phase 2: Resolve parent LEI from RR"
+    populations:
+      matched_entities:
+        source: _previous_matched
+        record_key: LEI
+        filter: []
+      rr_direct_parents:
+        source: gleif_rr
+        record_key: Relationship.StartNode.NodeID
+        filter:
+          - field: Relationship.RelationshipType
+            op: eq
+            value: "IS_DIRECTLY_CONSOLIDATED_BY"
+          - field: Relationship.RelationshipStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Relationship.EndNode.NodeIDType
+            op: eq
+            value: "LEI"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "PUBLISHED"
+    steps:
+      - name: Match child LEI to parent relationship
+        source: matched_entities
+        destination: rr_direct_parents
+        match_fields:
+          - source: LEI
+            destination: Relationship.StartNode.NodeID
+            method: exact
+            tiers: [raw]
+    output:
+      format: xlsx
+      summary: none
+      columns:
+        matched:
+          - field: Vendor ID
+            header: Vendor ID
+          - field: Vendor Name
+            header: Vendor Name
+          - field: LEI
+            header: Child LEI
+          - field: Relationship.EndNode.NodeID
+            header: Parent LEI
+          - field: Relationship.RelationshipType
+            header: Relationship Type
+
+  - name: "Phase 3: Resolve parent name from LEI"
+    populations:
+      matched_with_parent:
+        source: _previous_matched
+        record_key: Relationship.EndNode.NodeID
+        filter: []
+      gleif_entities:
+        source: gleif_lei
+        record_key: LEI
+        filter:
+          - field: Entity.EntityStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "ISSUED"
+    steps:
+      - name: Resolve parent LEI to entity name
+        source: matched_with_parent
+        destination: gleif_entities
+        match_fields:
+          - source: Relationship.EndNode.NodeID
+            destination: LEI
+            method: exact
+            tiers: [raw]
+        inherit:
+          - source: Entity.LegalName
+            as: parent_legal_name
+          - source: Entity.LegalAddress.Country
+            as: parent_country
+          - source: Entity.HeadquartersAddress.Country
+            as: parent_hq_country
+    output:
+      format: csv
+      summary: [md, xlsx]
+      match_mode: best_match
+      columns:
+        matched:
+          - field: Vendor ID
+            header: Vendor ID
+          - field: Vendor Name
+            header: Vendor Name
+          - field: Country
+            header: Vendor Country
+          - field: Internal Parent
+            header: Internal Parent (Expected)
+          - field: LEI
+            header: Matched LEI
+          - field: Entity.LegalName
+            header: GLEIF Legal Name
+          - field: Entity.LegalAddress.Country
+            header: Entity Country
+          - field: Entity.EntityStatus
+            header: Entity Status
+          - field: Relationship.EndNode.NodeID
+            header: Parent LEI
+          - field: parent_legal_name
+            header: Parent Legal Name
+          - field: parent_country
+            header: Parent Country
+          - field: parent_hq_country
+            header: Parent HQ Country
+          - field: match_step
+            header: Match Method
+          - field: match_tier
+            header: Match Tier
+          - field: name_score
+            header: Match Score
+        analysis:
+          - field: Vendor ID
+            header: Vendor ID
+          - field: Vendor Name
+            header: Vendor Name
+          - field: Country
+            header: Vendor Country
+          - field: Internal Parent
+            header: Internal Parent (Expected)
+          - field: reason_code
+            header: Unmatched Reason
+          - field: rejection_step
+            header: Rejected At Step
+          - field: best_rejected_score
+            header: Best Rejected Score

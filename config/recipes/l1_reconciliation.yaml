@@ -6,7 +6,7 @@
 #
 # Expected match rate: ~69% (31/45) against the test dataset.
 # For higher match rates, see l1_recon_80.yaml (80%) or
-# step_defaults_example.yaml (84% with core_parent fallback).
+# tests/recipes/step_defaults_example.yaml (84% with core_parent fallback).
 
 name: L1 Reconciliation
 description: Reconcile Pop1 parent IDs to trusted L1 records

@@ -224,7 +224,7 @@ steps:
 > [!NOTE]
 > When a step defines `inherit`, it completely replaces any `inherit` from step_defaults. This is by design -- lists don't merge because the order and content matter. Use `inherit` in step_defaults only when all steps inherit the same columns. Otherwise, define it per step as shown in Example 2.
 
-See `config/recipes/step_defaults_example.yaml` for a compact example using step_defaults. Compare with `l1_recon_80.yaml` (explicit per-step) to see the verbosity difference.
+See `tests/recipes/step_defaults_example.yaml` for a compact example using step_defaults. Compare with `l1_recon_80.yaml` (explicit per-step) to see the verbosity difference.
 
 ## Output Report
 
