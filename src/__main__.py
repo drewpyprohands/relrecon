@@ -316,6 +316,7 @@ def _write_phase_output(
             generate_report(
                 phase_df, phase_unmatched_df, report_path,
                 stats=p_stats, recipe=mini_recipe, recipe_file=recipe_file,
+                echo_recipe=recipe,
             )
             print(f"Phase {phase_idx + 1} report: {report_path}")
         except Exception as exc:

@@ -24,6 +24,7 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 RECIPES = Path(__file__).parent.parent / "config" / "recipes"
 L1_RECIPE = RECIPES / "l1_reconciliation.yaml"
 TIE_RECIPE = RECIPES / "tie_breaker_example.yaml"
+PHASED_RECIPE = RECIPES / "gleif_phased_output_example.yaml"
 
 
 def _tmp_xlsx():
@@ -114,3 +115,29 @@ def test_md_section_roundtrips():
     block = re.search(r"```(?:yaml|json)\n(.*)\n```", section, re.DOTALL)
     assert block, "fenced recipe block not found"
     assert parse_serialized_recipe(block.group(1)) == recipe
+
+
+def test_multi_phase_report_recipe_tab_roundtrips():
+    """Phase xlsx Recipe tab echoes the full multi-phase recipe (issue #64)."""
+    import glob
+    import os
+    import subprocess
+
+    repo = Path(__file__).parent.parent
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "PYTHONPATH": str(repo)}
+        subprocess.run(
+            [sys.executable, "-m", "src", "--recipe", str(PHASED_RECIPE),
+             "--data", str(DATA_DIR)],
+            cwd=tmp, env=env, check=True, capture_output=True, text=True,
+        )
+        reports = glob.glob(str(Path(tmp) / "output" / "phase_3_*_report.xlsx"))
+        assert reports, "phase 3 report not generated"
+
+        wb = load_workbook(reports[0])
+        assert "Recipe" in wb.sheetnames
+        got = read_recipe_tab(wb["Recipe"])
+        wb.close()
+
+    assert "phases" in got, "phase Recipe tab lost the top-level phases key"
+    assert got == load_recipe(str(PHASED_RECIPE))
