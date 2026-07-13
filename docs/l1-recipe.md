@@ -230,13 +230,14 @@ See `tests/recipes/step_defaults_example.yaml` for a compact example using step_
 
 With `summary: [md, xlsx]` (configured in the recipe's `output` block), the pipeline produces:
 
-**Excel report** (`_report.xlsx` or the main `.xlsx` when format is also xlsx) with three tabs:
+**Excel report** (`_report.xlsx` or the main `.xlsx` when format is also xlsx) with four tabs:
 
 - **Summary**: recipe config, population descriptions, per-step match counts, cascade explanation, pipeline timing
 - **Matched**: source/destination L3 names (side-by-side), derived L1 ID + Name, match source, match tier, address scores with source and destination addresses and `tpty_assm_nm` for review
 - **Analysis**: unmatched Pop1 records with reason codes for human review
+- **Recipe**: verbatim echo of the resolved recipe (incl. exclusions, derived columns, tie-breakers). Round-trips: parse column A as YAML to reconstruct the recipe. Never written to the matched/unmatched CSVs, which are DW imports.
 
-**Markdown summary** (`_summary.md`) with the same information plus a Mermaid cascade diagram.
+**Markdown summary** (`_summary.md`) with the same information plus a Mermaid cascade diagram and a resolved-recipe section.
 
 The `summary` key must be explicit. Without it, only raw data is produced (no report tabs, no markdown). See ADR-003 for details.
 

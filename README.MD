@@ -48,7 +48,8 @@ The engine has seven core modules, all driven by a single recipe config:
 | **signal_analysis.py** | Profile datasets to bootstrap stopwords, aliases, and unicode maps before configuring a recipe |
 | **address.py** | Two-pass address parsing + scoring with optional libpostal. Merges and cross-compares address fields, weights street name as strongest signal |
 | **matching.py** | Core engine: loads populations, applies filters, runs multi-step name matching (exact + fuzzy), scores addresses, resolves multi-match conflicts |
-| **report.py** | Excel output with Summary, Matched, and Analysis tabs. Recipe-driven column mapping with variant coalescing |
+| **report.py** | Excel output with Summary, Matched, Analysis, and Recipe tabs. Recipe-driven column mapping with variant coalescing |
+| **recipe_echo.py** | Echoes the resolved recipe into the xlsx Recipe tab and markdown report section. Round-trips to an equivalent recipe |
 | **summary.py** | Run summary generator. Plain-English markdown + Excel Summary tab from recipe config + pipeline stats. Includes Mermaid cascade diagram |
 
 ### Recipes

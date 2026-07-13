@@ -326,6 +326,11 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
         lines.append(mermaid_output)
         lines.append("```")
 
+    # --- Recipe echo ---
+    from recipe_echo import recipe_md_section
+    lines.append("")
+    lines.append(recipe_md_section(recipe))
+
     return "\n".join(lines)
 
 
@@ -457,6 +462,11 @@ def generate_phase_summary(
             lines.append("```mermaid")
             lines.append(mermaid_output)
             lines.append("```")
+
+    # --- Recipe echo (full resolved recipe) ---
+    from recipe_echo import recipe_md_section
+    lines.append("")
+    lines.append(recipe_md_section(recipe))
 
     return "\n".join(lines)
 

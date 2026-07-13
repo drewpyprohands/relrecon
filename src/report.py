@@ -326,6 +326,16 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
             import sys
             print(f"[WARN] Summary tab generation failed: {exc}", file=sys.stderr)
 
+    # --- Recipe Tab (echo of the resolved recipe, last sheet) ---
+    if recipe:
+        try:
+            from recipe_echo import write_recipe_tab
+            ws_recipe = wb.create_sheet("Recipe")
+            write_recipe_tab(ws_recipe, recipe)
+        except Exception as exc:
+            import sys
+            print(f"[WARN] Recipe tab generation failed: {exc}", file=sys.stderr)
+
     wb.save(str(out))
     return str(out)
 
