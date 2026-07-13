@@ -7,6 +7,12 @@ import json
 try:
     import yaml
     YAML_AVAILABLE = True
+
+    class _NoAliasDumper(yaml.SafeDumper):
+        """SafeDumper that inlines repeated objects instead of emitting YAML anchors/aliases."""
+
+        def ignore_aliases(self, data):
+            return True
 except ImportError:
     YAML_AVAILABLE = False
 
@@ -20,8 +26,9 @@ _HEADER_LINES = [
 def serialize_recipe(recipe: dict) -> str:
     """Serialize a resolved recipe to round-trippable text (YAML, else JSON)."""
     if YAML_AVAILABLE:
-        body = yaml.safe_dump(
-            recipe, sort_keys=False, default_flow_style=False, allow_unicode=True
+        body = yaml.dump(
+            recipe, Dumper=_NoAliasDumper,
+            sort_keys=False, default_flow_style=False, allow_unicode=True,
         )
         return "\n".join(_HEADER_LINES) + "\n" + body
     # JSON fallback omits the "#" header -- it would break json.loads.

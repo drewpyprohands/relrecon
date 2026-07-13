@@ -25,6 +25,7 @@ RECIPES = Path(__file__).parent.parent / "config" / "recipes"
 L1_RECIPE = RECIPES / "l1_reconciliation.yaml"
 TIE_RECIPE = RECIPES / "tie_breaker_example.yaml"
 PHASED_RECIPE = RECIPES / "gleif_phased_output_example.yaml"
+STEP_DEFAULTS_RECIPE = RECIPES / "step_defaults_example.yaml"
 
 
 def _tmp_xlsx():
@@ -115,6 +116,15 @@ def test_md_section_roundtrips():
     block = re.search(r"```(?:yaml|json)\n(.*)\n```", section, re.DOTALL)
     assert block, "fenced recipe block not found"
     assert parse_serialized_recipe(block.group(1)) == recipe
+
+
+def test_step_defaults_echo_has_no_yaml_aliases():
+    """step_defaults share nested objects; the echo must inline them, not alias."""
+    recipe = load_recipe(str(STEP_DEFAULTS_RECIPE))
+    text = serialize_recipe(recipe)
+    # PyYAML would emit "&id001"/"*id001" for repeated objects without the fix.
+    assert "&id" not in text and "*id" not in text
+    assert parse_serialized_recipe(text) == recipe
 
 
 def test_multi_phase_report_recipe_tab_roundtrips():
