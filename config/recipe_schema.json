@@ -610,6 +610,11 @@
           "default": "best_match",
           "description": "Match selection mode: 'best_match' keeps one match per source record, 'all_matches' keeps all."
         },
+        "emit_unmatched": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, the raw data export also writes an unmatched companion file (<base>_unmatched.<format>) with columns resolved via columns.analysis. Same format as the matched export (csv/parquet). Pairs with the raw data export, not the xlsx report (the Analysis tab already carries unmatched records)."
+        },
         "tabs": {
           "type": "array",
           "description": "Deprecated. Tab generation is automatic (Summary + Matched + Analysis). This field is ignored.",

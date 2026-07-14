@@ -142,7 +142,12 @@ def _write_output(
     import time
 
     from recipe import resolve_summary_modes
-    from report import apply_column_mapping, generate_report, write_raw_data
+    from report import (
+        apply_column_mapping,
+        generate_report,
+        write_raw_data,
+        write_unmatched_export,
+    )
 
     summary_modes = resolve_summary_modes(output_cfg)
     fmt = output_cfg.get("format", "xlsx")
@@ -161,6 +166,14 @@ def _write_output(
         export_df = apply_column_mapping(matched_df, output_cfg)
         write_raw_data(export_df, output_path, fmt)
         print(f"Data saved: {output_path} ({fmt}, {export_df.height} rows)")
+
+        if output_cfg.get("emit_unmatched") and unmatched_df is not None:
+            unmatched_path = output_path.rsplit(".", 1)[0] + f"_unmatched.{fmt}"
+            written = write_unmatched_export(
+                unmatched_df, output_cfg, unmatched_path, fmt,
+            )
+            if written:
+                print(f"Unmatched saved: {written} ({fmt}, {unmatched_df.height} rows)")
 
     if "md" in summary_modes:
         try:
@@ -248,7 +261,12 @@ def _write_phase_output(
 ):
     """Write output files for a single phase in a multi-phase pipeline."""
     from recipe import resolve_summary_modes
-    from report import apply_column_mapping, generate_report, write_raw_data
+    from report import (
+        apply_column_mapping,
+        generate_report,
+        write_raw_data,
+        write_unmatched_export,
+    )
 
     phase_output = phase_cfg.get("output", {})
     fmt = phase_output.get("format", "csv")
@@ -268,6 +286,17 @@ def _write_phase_output(
     export_df = apply_column_mapping(phase_df, phase_output)
     write_raw_data(export_df, data_path, fmt)
     print(f"Phase {phase_idx + 1} data: {data_path} ({fmt}, {export_df.height} rows)")
+
+    if phase_output.get("emit_unmatched") and phase_unmatched_df is not None:
+        unmatched_path = data_path.rsplit(".", 1)[0] + f"_unmatched.{fmt}"
+        written = write_unmatched_export(
+            phase_unmatched_df, phase_output, unmatched_path, fmt,
+        )
+        if written:
+            print(
+                f"Phase {phase_idx + 1} unmatched: {written} "
+                f"({fmt}, {phase_unmatched_df.height} rows)"
+            )
 
     # Build phase-specific stats for summaries
     phase_input = phase_stats.get("input_count", 0)

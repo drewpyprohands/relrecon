@@ -272,6 +272,26 @@ The `summary` key must be explicit. Without it, only raw data is produced (no re
 
 The output section also supports a `tie_breaker` config for selecting among duplicate destination matches and same-population matching (where source == destination). See [How Scoring Works](how-scoring-works.md#tie-breaker-outputtie_breaker) for details.
 
+### Unmatched companion export
+
+For a raw data export (`format: csv` or `parquet`), set `emit_unmatched: true` to also write an unmatched companion next to the matched file:
+
+```yaml
+output:
+  format: csv
+  emit_unmatched: true
+  columns:
+    matched: [...]
+    analysis: [...]   # resolves the companion's columns
+```
+
+- Matched export is unchanged: `{base}.{format}` via `columns.matched`.
+- Companion is new: `{base}_unmatched.{format}` via `columns.analysis`, same format, UTF-8 + header row (DW-importable). `reason_code` and rejection fields are backfilled when absent, matching the Analysis tab.
+- Columns are purely recipe-driven -- nothing synthesized. The filename is the matched/unmatched discriminator; union the two files downstream for a combined view.
+- Define `columns.analysis` for the companion to match the Analysis tab. Without it, the companion exports all columns (same fallback as the matched export without `columns.matched`), which will not match the tab's curated columns.
+- Zero unmatched rows still writes a header-only file, so a downstream job sees the file every run. Header stability holds for normal runs; a degenerate run (empty source population or a missing tracked field) can yield a frame with no columns, collapsing the header to just the backfilled reason columns.
+- Pairs with the raw data export, not the xlsx report (whose Analysis tab already carries unmatched records). Off by default. Setting it in xlsx report mode has no effect and emits a validation warning.
+
 ## Name Normalization Note
 
 > [!IMPORTANT]
