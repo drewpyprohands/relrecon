@@ -87,6 +87,15 @@ def test_load_exclusions_missing_file_raises(tmp_path):
         load_exclusions("nope.csv", base_dir=str(tmp_path))
 
 
+def test_load_exclusions_handles_utf8_bom(tmp_path):
+    """Excel 'CSV UTF-8' exports carry a BOM; header must still parse."""
+    (tmp_path / "bom.csv").write_text(
+        "step,vnd_id\nMatchA,V7001\n", encoding="utf-8-sig"
+    )
+    got = load_exclusions("bom.csv", base_dir=str(tmp_path))
+    assert got == {"MatchA": ["V7001"]}
+
+
 def test_load_exclusions_custom_id_column(tmp_path):
     """id_column lets the CSV name its id column anything."""
     (tmp_path / "excl.csv").write_text(

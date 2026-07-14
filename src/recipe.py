@@ -367,7 +367,7 @@ def load_exclusions(exclusions_cfg, base_dir: str = ".") -> dict[str, list[str]]
         raise FileNotFoundError(f"Exclusions file not found: {path}")
 
     result: dict[str, list[str]] = {}
-    with open(p, newline="") as f:
+    with open(p, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         fields = reader.fieldnames or []
         cols = {c.strip().lower(): c for c in fields}
