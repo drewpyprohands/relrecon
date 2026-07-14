@@ -87,26 +87,6 @@ output:
 
 This is still per-phase output -- it uses that phase's match results, not data from other phases. The enrichment is a post-processing transform in the output layer (`enrich_join()` in `report.py`, `_build_enriched_output()` in `__main__.py`). The matching engine is unmodified.
 
-## Unmatched Companion Export (Extension)
-
-**Added:** 2026-07-13
-
-A raw data export (`format: csv` or `parquet`) can set `emit_unmatched: true` to also write an unmatched companion file next to the matched export:
-
-```yaml
-output:
-  format: csv
-  emit_unmatched: true
-  columns:
-    matched: [...]
-    analysis: [...]   # resolves the companion's columns
-```
-
-- Matched export is unchanged: `{base}.{format}` via `columns.matched`.
-- Companion is new: `{base}_unmatched.{format}` via `columns.analysis`, same format, UTF-8 + header row. `reason_code`/rejection fields are backfilled as the Analysis tab does when absent.
-- Nothing is synthesized or hardcoded -- both files are purely recipe-driven column mappings. No `match_status` column; the filename is the discriminator (union downstream if a combined view is needed).
-- Pairs with the raw data export, not the xlsx report (whose Analysis tab already carries unmatched records). Flag off/absent -> output unchanged.
-
 ## Consequences
 
 - Single-phase recipes work identically to before (backward compatible)
