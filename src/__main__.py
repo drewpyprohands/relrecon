@@ -167,13 +167,13 @@ def _write_output(
         write_raw_data(export_df, output_path, fmt)
         print(f"Data saved: {output_path} ({fmt}, {export_df.height} rows)")
 
-        if output_cfg.get("emit_unmatched"):
+        if output_cfg.get("emit_unmatched") and unmatched_df is not None:
             unmatched_path = output_path.rsplit(".", 1)[0] + f"_unmatched.{fmt}"
             written = write_unmatched_export(
                 unmatched_df, output_cfg, unmatched_path, fmt,
             )
             if written:
-                print(f"Unmatched saved: {written} ({fmt})")
+                print(f"Unmatched saved: {written} ({fmt}, {unmatched_df.height} rows)")
 
     if "md" in summary_modes:
         try:
@@ -287,13 +287,16 @@ def _write_phase_output(
     write_raw_data(export_df, data_path, fmt)
     print(f"Phase {phase_idx + 1} data: {data_path} ({fmt}, {export_df.height} rows)")
 
-    if phase_output.get("emit_unmatched"):
+    if phase_output.get("emit_unmatched") and phase_unmatched_df is not None:
         unmatched_path = data_path.rsplit(".", 1)[0] + f"_unmatched.{fmt}"
         written = write_unmatched_export(
             phase_unmatched_df, phase_output, unmatched_path, fmt,
         )
         if written:
-            print(f"Phase {phase_idx + 1} unmatched: {written} ({fmt})")
+            print(
+                f"Phase {phase_idx + 1} unmatched: {written} "
+                f"({fmt}, {phase_unmatched_df.height} rows)"
+            )
 
     # Build phase-specific stats for summaries
     phase_input = phase_stats.get("input_count", 0)

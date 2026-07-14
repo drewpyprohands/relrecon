@@ -7,6 +7,7 @@ DW-importable (UTF-8 + header row), row count == unmatched count.
 """
 
 import copy
+import importlib.util
 import sys
 import tempfile
 from pathlib import Path
@@ -19,8 +20,17 @@ from matching import run_pipeline
 from recipe import load_recipe, validate_recipe
 from report import apply_column_mapping, write_unmatched_export
 
+SRC = Path(__file__).parent.parent / "src"
 DATA_DIR = Path(__file__).parent.parent / "data"
 RECIPE_PATH = Path(__file__).parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
+
+
+def _load_main():
+    """Import src/__main__.py under a private name (can't be imported as __main__)."""
+    spec = importlib.util.spec_from_file_location("relrecon_main", SRC / "__main__.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 # An output config whose analysis mapping references a field absent from the
 # raw frame (reason_code) to prove reason columns are backfilled.
@@ -92,13 +102,22 @@ def test_dw_importable_utf8_header_row():
     Path(path).unlink()
 
 
-def test_noop_on_empty_and_none():
+def test_none_frame_writes_nothing():
     path = _tmp(".csv")
     Path(path).unlink()  # ensure absent
     assert write_unmatched_export(None, _OUTPUT_CFG, path, "csv") is None
-    empty = _unmatched_frame().clear()
-    assert write_unmatched_export(empty, _OUTPUT_CFG, path, "csv") is None
     assert not Path(path).exists()
+
+
+def test_empty_frame_writes_header_only():
+    """Zero unmatched still produces a deterministic header-only file."""
+    path = _tmp(".csv")
+    written = write_unmatched_export(_unmatched_frame().clear(), _OUTPUT_CFG, path, "csv")
+    assert written == path
+    out = pl.read_csv(path)
+    assert out.height == 0
+    assert out.columns == ["Vendor ID", "L3 Name", "Reason Code"]
+    Path(path).unlink()
 
 
 def test_apply_column_mapping_analysis_key():
@@ -134,4 +153,51 @@ def test_schema_accepts_emit_unmatched():
     recipe["output"]["emit_unmatched"] = True
     # No additionalProperties warning for emit_unmatched
     warnings = validate_recipe(recipe)
-    assert not any("emit_unmatched" in w for w in warnings)
+    assert not any("additionalProperties" in w and "emit_unmatched" in w for w in warnings)
+
+
+def test_warns_in_xlsx_report_mode():
+    """emit_unmatched is inert in xlsx report mode -> validation warns."""
+    recipe = copy.deepcopy(load_recipe(str(RECIPE_PATH)))  # l1 is format:xlsx + xlsx summary
+    recipe["output"]["emit_unmatched"] = True
+    warnings = validate_recipe(recipe)
+    assert any("emit_unmatched has no effect" in w for w in warnings)
+
+
+def test_no_warn_in_csv_mode():
+    recipe = copy.deepcopy(load_recipe(str(RECIPE_PATH)))
+    recipe["output"]["format"] = "csv"
+    recipe["output"]["summary"] = "none"
+    recipe["output"]["emit_unmatched"] = True
+    warnings = validate_recipe(recipe)
+    assert not any("emit_unmatched has no effect" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# CLI wiring: _write_output actually invokes the companion export
+# ---------------------------------------------------------------------------
+
+def test_write_output_wiring_emits_companion(tmp_path):
+    """Exercise the _write_output glue, not write_unmatched_export directly."""
+    main = _load_main()
+    cfg = {
+        "format": "csv",
+        "summary": "none",
+        "emit_unmatched": True,
+        "columns": {
+            "matched": [{"field": "vendor_id", "header": "Vendor ID"}],
+            "analysis": [{"field": "vendor_id", "header": "Vendor ID"}],
+        },
+    }
+    matched = pl.DataFrame({"vendor_id": ["V1", "V2"]})
+    unmatched = pl.DataFrame({"vendor_id": ["V9"]})
+    out = str(tmp_path / "data.csv")
+    main._write_output(
+        output_cfg=cfg, matched_df=matched, unmatched_df=unmatched,
+        output_path=out, stats={}, recipe={"name": "t", "output": cfg},
+        recipe_file="t.yaml",
+    )
+    assert Path(out).exists()
+    companion = tmp_path / "data_unmatched.csv"
+    assert companion.exists()
+    assert pl.read_csv(companion)["Vendor ID"].to_list() == ["V9"]

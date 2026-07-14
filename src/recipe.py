@@ -242,6 +242,16 @@ def validate_recipe(recipe: dict) -> list[str]:
                 "Add summary: [md, xlsx] for a formatted report, "
                 "or summary: none to silence this warning."
             )
+        if (
+            output_block.get("emit_unmatched")
+            and output_block.get("format") == "xlsx"
+            and "xlsx" in resolve_summary_modes(output_block)
+        ):
+            warnings.append(
+                f"{label}: emit_unmatched has no effect in xlsx report mode "
+                "(format: xlsx + xlsx summary) -- unmatched records are already "
+                "in the Analysis tab. Use format: csv or parquet to export them."
+            )
 
     if "output" in recipe:
         _check_output_block(recipe["output"], "output")

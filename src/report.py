@@ -458,9 +458,10 @@ def write_unmatched_export(unmatched_df, output_cfg: dict, path: str, fmt: str):
 
     Columns resolved via output.columns.analysis (recipe-driven, same as the
     Analysis tab). reason_code and rejection fields are populated when absent.
-    No-ops (returns None) when there is no unmatched data.
+    Zero unmatched rows still writes a header-only file (deterministic for DW
+    imports). No-ops (returns None) only when there is no unmatched frame.
     """
-    if unmatched_df is None or unmatched_df.height == 0:
+    if unmatched_df is None:
         return None
     unmatched_df = _ensure_reason_columns(unmatched_df)
     export_df = apply_column_mapping(unmatched_df, output_cfg, key="analysis")
