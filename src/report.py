@@ -194,6 +194,17 @@ def _coalesce_dest_columns(df):
     return _coalesce_variant_columns(df, DEST_COLUMNS)
 
 
+def _ensure_reason_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Populate reason_code and rejection fields when absent (Analysis defaults)."""
+    if "reason_code" in df.columns:
+        return df
+    return df.with_columns(
+        pl.lit("no_name_match").alias("reason_code"),
+        pl.lit(None).cast(pl.String).alias("rejection_step"),
+        pl.lit(None).cast(pl.Float64).alias("best_rejected_score"),
+    )
+
+
 def _resolve_columns(df: pl.DataFrame, column_defs: list) -> list:
     """Resolve which columns exist in the DataFrame."""
     available = set(df.columns)
@@ -299,12 +310,7 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
     ws_analysis = wb.create_sheet("Analysis")
 
     if unmatched_df is not None and unmatched_df.height > 0:
-        if "reason_code" not in unmatched_df.columns:
-            unmatched_df = unmatched_df.with_columns(
-                pl.lit("no_name_match").alias("reason_code"),
-                pl.lit(None).cast(pl.String).alias("rejection_step"),
-                pl.lit(None).cast(pl.Float64).alias("best_rejected_score"),
-            )
+        unmatched_df = _ensure_reason_columns(unmatched_df)
 
         if recipe_columns and "analysis" in recipe_columns:
             analysis_cols = _build_columns_from_recipe(recipe_columns["analysis"], unmatched_df)
@@ -399,20 +405,21 @@ def write_raw_data(df, path: str, fmt: str):
         raise ValueError(f"Unsupported output format: {fmt}")
 
 
-def apply_column_mapping(df, output_cfg: dict):
-    """Apply output.columns.matched mapping to a DataFrame.
+def apply_column_mapping(df, output_cfg: dict, key: str = "matched"):
+    """Apply an output.columns mapping to a DataFrame.
 
-    Selects and renames columns per the recipe's output.columns config.
-    Returns the original DataFrame if no column mapping is configured.
+    Selects and renames columns per the recipe's output.columns[key] config
+    ("matched" or "analysis"). Returns the original DataFrame if no mapping
+    is configured for that key.
     """
     cols_cfg = output_cfg.get("columns", {})
-    matched_cols = cols_cfg.get("matched")
-    if not matched_cols:
+    col_defs = cols_cfg.get(key)
+    if not col_defs:
         return df
 
     select_cols = []
     rename_map = {}
-    for entry in matched_cols:
+    for entry in col_defs:
         # Support both 'field' and 'fields' (coalesce)
         field = entry.get("field")
         fields = entry.get("fields", [])
@@ -426,7 +433,7 @@ def apply_column_mapping(df, output_cfg: dict):
             import sys
             print(
                 f'[WARN] Output column "{field}" (header: "{header}") '
-                f"not found in matched data -- skipped. "
+                f"not found in {key} data -- skipped. "
                 f"Available: {', '.join(sorted(df.columns)[:15])}",
                 file=sys.stderr,
             )
@@ -444,6 +451,21 @@ def apply_column_mapping(df, output_cfg: dict):
     if rename_map:
         df = df.rename(rename_map)
     return df
+
+
+def write_unmatched_export(unmatched_df, output_cfg: dict, path: str, fmt: str):
+    """Write unmatched records as a raw data file (companion to the matched export).
+
+    Columns resolved via output.columns.analysis (recipe-driven, same as the
+    Analysis tab). reason_code and rejection fields are populated when absent.
+    No-ops (returns None) when there is no unmatched data.
+    """
+    if unmatched_df is None or unmatched_df.height == 0:
+        return None
+    unmatched_df = _ensure_reason_columns(unmatched_df)
+    export_df = apply_column_mapping(unmatched_df, output_cfg, key="analysis")
+    write_raw_data(export_df, path, fmt)
+    return path
 
 
 def enrich_join(source_df, matched_df, enrich_key: str):
