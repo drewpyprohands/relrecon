@@ -172,6 +172,31 @@
       "description": "Default values merged into every step before validation. Step-level values win on conflict. Removed after expansion.",
       "additionalProperties": true
     },
+    "exclusions": {
+      "description": "Global exclusions CSV. Either a path string, or an object {file, id_column}. CSV columns: step, <id>[, note]. Each row routes an id into the named step's exclude mechanism (matched against the population record_key); excluded records cascade to later steps.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Path to the exclusions CSV"
+            },
+            "id_column": {
+              "type": "string",
+              "description": "CSV column holding the record ids. Defaults to 'vnd_id', else the sole non-step/non-note column."
+            }
+          }
+        }
+      ]
+    },
     "normalization": {
       "type": "object",
       "additionalProperties": false,

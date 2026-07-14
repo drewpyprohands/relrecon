@@ -332,6 +332,104 @@ def load_source(source_config: dict, base_dir: str = ".",
     )
 
 
+# ---------------------------------------------------------------------------
+# Global exclusions file
+# ---------------------------------------------------------------------------
+
+def load_exclusions(exclusions_cfg, base_dir: str = ".") -> dict[str, list[str]]:
+    """Load the global exclusions CSV into {step_name: [id, ...]}.
+
+    ``exclusions_cfg`` is either a path string or an object
+    ``{file, id_column?}``. The CSV needs a ``step`` column, one id column
+    (name it whatever your data uses), and an optional ``note`` column. The
+    id column is resolved as: ``id_column`` if set, else ``vnd_id`` if
+    present, else the sole remaining non-note column. A header row is
+    required; blank rows and rows missing step or id are skipped. Order is
+    preserved.
+
+    The id values are matched against each step's exclude field (the
+    population ``record_key`` by default), so the header name is only a label.
+    """
+    import csv
+
+    if isinstance(exclusions_cfg, str):
+        path, id_column = exclusions_cfg, None
+    else:
+        path = exclusions_cfg.get("file")
+        id_column = exclusions_cfg.get("id_column")
+    if not path:
+        raise ValueError("exclusions requires a 'file' path")
+
+    p = Path(path)
+    if not p.exists():
+        p = Path(base_dir) / path
+    if not p.exists():
+        raise FileNotFoundError(f"Exclusions file not found: {path}")
+
+    result: dict[str, list[str]] = {}
+    with open(p, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        fields = reader.fieldnames or []
+        cols = {c.strip().lower(): c for c in fields}
+        if "step" not in cols:
+            raise ValueError(
+                f"Exclusions file {p} must have a 'step' column; got {fields}"
+            )
+        id_col = _resolve_exclusion_id_col(p, cols, fields, id_column)
+        step_col = cols["step"]
+        for row in reader:
+            step = (row.get(step_col) or "").strip()
+            val = (row.get(id_col) or "").strip()
+            if step and val:
+                result.setdefault(step, []).append(val)
+    return result
+
+
+def _resolve_exclusion_id_col(p, cols: dict, fields: list, id_column) -> str:
+    """Resolve which CSV column holds the exclusion ids."""
+    if id_column:
+        key = id_column.strip().lower()
+        if key not in cols:
+            raise ValueError(
+                f"Exclusions file {p} has no '{id_column}' column; got {fields}"
+            )
+        return cols[key]
+    if "vnd_id" in cols:
+        return cols["vnd_id"]
+    candidates = [orig for low, orig in cols.items() if low not in ("step", "note")]
+    if len(candidates) == 1:
+        return candidates[0]
+    raise ValueError(
+        f"Exclusions file {p}: could not infer the id column from {fields}. "
+        f"Set exclusions.id_column to the column holding the record ids."
+    )
+
+
+def apply_exclusions(recipe: dict, exclusions: dict[str, list[str]]) -> list[str]:
+    """Route exclusion rows into each named step's exclude mechanism.
+
+    Merges values into ``step["exclude"]["values"]`` (creating the block if
+    absent), so any inline per-step exclude still applies. Returns a list of
+    step names present in the file but not found in the recipe.
+    """
+    if not exclusions:
+        return []
+
+    steps = list(recipe.get("steps", []))
+    for phase in recipe.get("phases", []):
+        steps.extend(phase.get("steps", []))
+
+    seen = {step.get("name") for step in steps}
+    for step in steps:
+        vals = exclusions.get(step.get("name"))
+        if not vals:
+            continue
+        exc = step.setdefault("exclude", {})
+        exc["values"] = list(exc.get("values", [])) + list(vals)
+
+    return [name for name in exclusions if name not in seen]
+
+
 def build_filter_expr(filter_config: list, join_mode: str = "and") -> pl.Expr:
     """Build a Polars expression from the filter DSL.
 

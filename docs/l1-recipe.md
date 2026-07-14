@@ -87,6 +87,35 @@ The only reliable field for the migrated records is the **child/vendor name (`l3
 
 All steps run against **all** Pop1 records -- the "cascade" is resolved at the end via dedup, not by excluding matched records from later steps. In `best_match` mode (default), dedup keeps the earliest step then highest scores when multiple steps match the same record. Use `all_matches` mode in the recipe to skip dedup and see all candidates for analysis.
 
+### Manual exclusions
+
+To suppress specific bad matches at a named step (so the record falls through to later steps), list them in one CSV and point the recipe at it:
+
+```yaml
+exclusions: config/exclusions.csv   # top-level recipe key
+```
+
+```csv
+step,vnd_id,note
+Match Pop1 to core_parent,V7001,wrong core_parent match -- reviewed 2026-07
+Match Pop1 to Pop3,V7042,pop3 dupe
+```
+
+Each row routes the id into that step's existing `exclude` mechanism, **matched against the population `record_key`** -- the CSV column name is only a label, not a field in your data. Excluded records still cascade to later steps. Any inline per-step `exclude` block continues to apply and is merged with the file. The run summary reports per-step exclusion counts and IDs.
+
+**Naming the id column.** The id column defaults to `vnd_id`, but if your data uses a different identifier, name it whatever you like and either let it auto-detect (when it's the only non-`note` column) or point at it explicitly:
+
+```yaml
+exclusions:
+  file: config/exclusions.csv
+  id_column: supplier_id
+```
+
+```csv
+step,supplier_id,note
+Match Pop1 to core_parent,S1001,merged into parent
+```
+
 Address matching is **supporting evidence** in all steps, not standalone match criteria.
 
 ### Address Matching
