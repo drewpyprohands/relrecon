@@ -76,15 +76,45 @@ def test_load_exclusions_parses_rows(tmp_path):
     assert got == {"MatchA": ["V7001", "V7002"], "MatchB": ["V7003"]}
 
 
-def test_load_exclusions_missing_column_raises(tmp_path):
-    (tmp_path / "bad.csv").write_text("step,other\nMatchA,x\n")
-    with pytest.raises(ValueError, match="vnd_id"):
+def test_load_exclusions_missing_step_column_raises(tmp_path):
+    (tmp_path / "bad.csv").write_text("foo,vnd_id\nx,y\n")
+    with pytest.raises(ValueError, match="step"):
         load_exclusions("bad.csv", base_dir=str(tmp_path))
 
 
 def test_load_exclusions_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_exclusions("nope.csv", base_dir=str(tmp_path))
+
+
+def test_load_exclusions_custom_id_column(tmp_path):
+    """id_column lets the CSV name its id column anything."""
+    (tmp_path / "excl.csv").write_text(
+        "step,supplier_id,note\nMatchA,S1,x\nMatchB,S2,\n"
+    )
+    cfg = {"file": "excl.csv", "id_column": "supplier_id"}
+    got = load_exclusions(cfg, base_dir=str(tmp_path))
+    assert got == {"MatchA": ["S1"], "MatchB": ["S2"]}
+
+
+def test_load_exclusions_autodetects_sole_id_column(tmp_path):
+    """With no vnd_id and no config, the single non-note column is used."""
+    (tmp_path / "excl.csv").write_text("step,supplier_id,note\nMatchA,S1,x\n")
+    got = load_exclusions("excl.csv", base_dir=str(tmp_path))
+    assert got == {"MatchA": ["S1"]}
+
+
+def test_load_exclusions_ambiguous_id_column_raises(tmp_path):
+    (tmp_path / "excl.csv").write_text("step,supplier_id,region\nMatchA,S1,EU\n")
+    with pytest.raises(ValueError, match="id_column"):
+        load_exclusions("excl.csv", base_dir=str(tmp_path))
+
+
+def test_load_exclusions_bad_id_column_raises(tmp_path):
+    (tmp_path / "excl.csv").write_text("step,supplier_id\nMatchA,S1\n")
+    with pytest.raises(ValueError, match="no 'nope' column"):
+        load_exclusions({"file": "excl.csv", "id_column": "nope"},
+                        base_dir=str(tmp_path))
 
 
 def test_apply_exclusions_merges_with_inline():
@@ -119,6 +149,19 @@ def test_exclusion_applied_at_named_step_only_and_cascades(tmp_path):
     assert by_id["V7002"] == "MatchA"
     assert by_id["V7003"] == "MatchA"
     assert matched.height == 3
+
+
+def test_pipeline_custom_id_column(tmp_path):
+    """Object form + custom id column routes correctly against record_key."""
+    _write_data(tmp_path)
+    (tmp_path / "excl.csv").write_text("step,supplier_ref\nMatchA,V7001\n")
+    recipe = _recipe(exclusions={"file": "excl.csv", "id_column": "supplier_ref"})
+
+    result = run_pipeline(recipe, base_dir=str(tmp_path))
+    by_id = dict(zip(result["matched"]["vendor_id"].to_list(),
+                     result["matched"]["match_step"].to_list(), strict=True))
+    assert by_id["V7001"] == "MatchB"
+    assert result["stats"]["exclusions"]["MatchA"]["count"] == 1
 
 
 def test_summary_counts_correct(tmp_path):
