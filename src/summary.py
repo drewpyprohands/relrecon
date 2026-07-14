@@ -150,6 +150,20 @@ def _format_timing(timing: dict) -> str:
     return " | ".join(parts)
 
 
+def _render_exclusions(exclusions: dict | None) -> list[str]:
+    """Render the per-step exclusion table from stats['exclusions']."""
+    if not exclusions:
+        return []
+    lines = ["**Exclusions (from exclusions file):**", ""]
+    lines.append("| Step | Excluded | IDs |")
+    lines.append("|---|---|---|")
+    for step_name, info in exclusions.items():
+        ids = ", ".join(str(v) for v in info.get("values", []))
+        lines.append(f"| {step_name} | {info.get('count', 0)} | {ids} |")
+    lines.append("")
+    return lines
+
+
 def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
                      timing: dict | None = None,
                      mermaid: str = "default",
@@ -229,6 +243,9 @@ def generate_summary(recipe: dict, stats: dict, matched_df: pl.DataFrame,
     if timing:
         lines.append(f"**Timing:** {_format_timing(timing)}  ")
     lines.append("")
+
+    # --- Exclusions (from global exclusions file) ---
+    lines.extend(_render_exclusions(stats.get("exclusions") if stats else None))
 
     # --- Step table ---
     lines.append("**Matching steps (in priority order):**")
@@ -401,6 +418,9 @@ def generate_phase_summary(
     if phase_time is not None:
         lines.append(f"**Phase time:** {phase_time:.2f}s  ")
     lines.append("")
+
+    # --- Exclusions (from global exclusions file) ---
+    lines.extend(_render_exclusions(phase_stats.get("exclusions")))
 
     # --- Step table ---
     lines.append("**Matching steps (in priority order):**")

@@ -332,6 +332,68 @@ def load_source(source_config: dict, base_dir: str = ".",
     )
 
 
+# ---------------------------------------------------------------------------
+# Global exclusions file
+# ---------------------------------------------------------------------------
+
+def load_exclusions(path: str, base_dir: str = ".") -> dict[str, list[str]]:
+    """Load the global exclusions CSV into {step_name: [vnd_id, ...]}.
+
+    Columns: step, vnd_id[, note]. A header row is required. Blank rows and
+    rows missing step or vnd_id are skipped. Order is preserved.
+    """
+    import csv
+
+    p = Path(path)
+    if not p.exists():
+        p = Path(base_dir) / path
+    if not p.exists():
+        raise FileNotFoundError(f"Exclusions file not found: {path}")
+
+    result: dict[str, list[str]] = {}
+    with open(p, newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            return result
+        cols = {c.strip().lower(): c for c in reader.fieldnames}
+        if "step" not in cols or "vnd_id" not in cols:
+            raise ValueError(
+                f"Exclusions file {p} must have 'step' and 'vnd_id' columns; "
+                f"got {reader.fieldnames}"
+            )
+        for row in reader:
+            step = (row.get(cols["step"]) or "").strip()
+            vnd = (row.get(cols["vnd_id"]) or "").strip()
+            if step and vnd:
+                result.setdefault(step, []).append(vnd)
+    return result
+
+
+def apply_exclusions(recipe: dict, exclusions: dict[str, list[str]]) -> list[str]:
+    """Route exclusion rows into each named step's exclude mechanism.
+
+    Merges values into ``step["exclude"]["values"]`` (creating the block if
+    absent), so any inline per-step exclude still applies. Returns a list of
+    step names present in the file but not found in the recipe.
+    """
+    if not exclusions:
+        return []
+
+    steps = list(recipe.get("steps", []))
+    for phase in recipe.get("phases", []):
+        steps.extend(phase.get("steps", []))
+
+    seen = {step.get("name") for step in steps}
+    for step in steps:
+        vals = exclusions.get(step.get("name"))
+        if not vals:
+            continue
+        exc = step.setdefault("exclude", {})
+        exc["values"] = list(exc.get("values", [])) + list(vals)
+
+    return [name for name in exclusions if name not in seen]
+
+
 def build_filter_expr(filter_config: list, join_mode: str = "and") -> pl.Expr:
     """Build a Polars expression from the filter DSL.
 

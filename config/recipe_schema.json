@@ -172,6 +172,10 @@
       "description": "Default values merged into every step before validation. Step-level values win on conflict. Removed after expansion.",
       "additionalProperties": true
     },
+    "exclusions": {
+      "type": "string",
+      "description": "Path to a global exclusions CSV (columns: step, vnd_id[, note]). Each row routes a vnd_id into the named step's exclude mechanism; excluded records cascade to later steps."
+    },
     "normalization": {
       "type": "object",
       "additionalProperties": false,

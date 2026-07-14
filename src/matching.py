@@ -497,6 +497,8 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
 
     step_config = _normalize_step_filters(step_config)
 
+    rejections: dict = {}
+
     # Step exclusion: skip specific records so they fall through to later steps
     exclude_cfg = step_config.get("exclude")
     if exclude_cfg:
@@ -514,10 +516,10 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                             exc_values.append(row[0].strip())
         if exc_field and exc_values and exc_field in source_df.columns:
             exc_set = set(str(v) for v in exc_values)
+            col_before = source_df[exc_field].cast(pl.String)
+            present = sorted(set(col_before.to_list()) & exc_set)
             pre_count = source_df.height
-            source_df = source_df.filter(
-                ~pl.col(exc_field).cast(pl.String).is_in(exc_set)
-            )
+            source_df = source_df.filter(~col_before.is_in(exc_set))
             excluded_count = pre_count - source_df.height
             if excluded_count > 0:
                 import sys
@@ -526,6 +528,12 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                     f'(field={exc_field}, values={len(exc_set)})',
                     file=sys.stderr,
                 )
+                rejections["_excluded"] = {
+                    "step": step_config.get("name"),
+                    "field": exc_field,
+                    "count": excluded_count,
+                    "values": present,
+                }
 
     for filt in step_config.get("filters", []):
         applies_to = filt.get("applies_to", "destination")
@@ -535,7 +543,7 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
             source_df = _apply_step_filter(source_df, filt)
     if dest_df.height == 0:
         if collect_rejections:
-            return pl.DataFrame(), {"filtered_by_step_filter": set()}
+            return pl.DataFrame(), {**rejections, "filtered_by_step_filter": set()}
         return pl.DataFrame()
 
     mf = step_config["match_fields"][0]
@@ -571,10 +579,9 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
 
     if matched.height == 0:
         if collect_rejections:
-            return pl.DataFrame(), {}
+            return pl.DataFrame(), rejections
         return pl.DataFrame()
 
-    rejections = {}
     if "address_support" in step_config:
         ac = step_config["address_support"]
         src_cols = list(ac["source"])
@@ -703,6 +710,7 @@ def _run_phase_steps(steps, populations, sources,
     all_matched = []
     matched_source_keys = set()
     all_rejections = {}
+    step_exclusions = {}
 
     for step_idx, step in enumerate(steps):
         src_pop = step["source"]
@@ -740,6 +748,14 @@ def _run_phase_steps(steps, populations, sources,
         )
         matched, rejections = step_result
 
+        exc = rejections.pop("_excluded", None)
+        if exc:
+            step_exclusions[exc["step"]] = {
+                "count": exc["count"],
+                "values": exc["values"],
+                "field": exc["field"],
+            }
+
         if "street_mismatch" in rejections:
             for key, score in rejections["street_mismatch"].items():
                 if key not in all_rejections:
@@ -772,6 +788,7 @@ def _run_phase_steps(steps, populations, sources,
         "all_matched": all_matched,
         "matched_source_keys": matched_source_keys,
         "all_rejections": all_rejections,
+        "step_exclusions": step_exclusions,
     }
 
 
@@ -943,6 +960,20 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
         from recipe import _apply_step_defaults
         recipe = _apply_step_defaults(recipe)
 
+    # Route global exclusions into each named step's exclude mechanism
+    if recipe.get("exclusions"):
+        import sys as _sys
+
+        from recipe import apply_exclusions, load_exclusions
+        exclusions = load_exclusions(recipe["exclusions"], base_dir)
+        unknown = apply_exclusions(recipe, exclusions)
+        for name in unknown:
+            print(
+                f'[WARN] Exclusions file references unknown step "{name}" '
+                "-- no such step in recipe.",
+                file=_sys.stderr,
+            )
+
     t = _time.time()
     sources = {}
     for name, cfg in recipe["sources"].items():
@@ -1055,6 +1086,7 @@ def _run_single_phase(recipe, sources, norm, timings):
             "total_source": pop1_df.height,
             "matched_count": combined.height,
             "unmatched_count": unmatched.height,
+            "exclusions": phase_result["step_exclusions"],
         },
         "timing": timings,
     }
@@ -1085,6 +1117,7 @@ def _run_multi_phase(recipe, sources, norm, timings):
     first_phase_matched = None  # Store Phase 1 output for partial-match recovery
     cumulative_matched_keys = set()
     cumulative_rejections = {}
+    cumulative_exclusions = {}
 
     for phase_idx, phase in enumerate(phases):
         t = _time.time()
@@ -1187,6 +1220,7 @@ def _run_multi_phase(recipe, sources, norm, timings):
             "input_count": input_count,
             "time": phase_time,
             "step_counts": phase_step_counts,
+            "exclusions": phase_result["step_exclusions"],
         })
 
         print(
@@ -1204,6 +1238,7 @@ def _run_multi_phase(recipe, sources, norm, timings):
                 first_phase_matched = phase_matched
 
         cumulative_rejections.update(phase_result["all_rejections"])
+        cumulative_exclusions.update(phase_result["step_exclusions"])
         phase_snapshots.append(phase_matched.clone())
 
         # Build per-phase unmatched for phase-level output
@@ -1269,6 +1304,7 @@ def _run_multi_phase(recipe, sources, norm, timings):
             "matched_count": combined.height,
             "unmatched_count": unmatched.height,
             "phases": phase_stats,
+            "exclusions": cumulative_exclusions,
         },
         "timing": timings,
         "phases": phase_stats,
