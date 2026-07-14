@@ -86,7 +86,7 @@ class TestStepDefaultsExample:
 def _run_cli(recipe_name):
     """Run a recipe through the CLI entry point (for output file generation)."""
     result = subprocess.run(
-        ["python3", "-m", "src", "--recipe", os.path.join(RECIPE_DIR, recipe_name),
+        [sys.executable, "-m", "src", "--recipe", os.path.join(RECIPE_DIR, recipe_name),
          "--data", DATA_DIR],
         capture_output=True, text=True,
         cwd=os.path.join(os.path.dirname(__file__), ".."),
