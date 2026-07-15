@@ -684,6 +684,9 @@ def validate_fields(
         for inh in step.get("inherit", []):
             if "as" in inh:
                 known_derived.add(inh["as"])
+    # Columns that exist before the rollup runs (source + static + inherited);
+    # write_to must not collide with any of these (checked below).
+    preexisting_cols = all_source_cols | known_derived
     # final_rollup adds a write_to column plus its <write_to>_changed flag
     for bucket in recipe.get("output", {}).get("final_rollup", []) or []:
         if isinstance(bucket, dict):
@@ -738,6 +741,21 @@ def validate_fields(
                     f'output.final_rollup[{i}]: {role} "{col}" not found in '
                     f"source data or known derived columns"
                 )
+
+    # write_to must name a NEW column. Colliding with an existing source,
+    # derived, or target column would silently overwrite it, and the
+    # <write_to>_changed flag would be structurally always-False (Issue #67).
+    for i, bucket in enumerate(recipe.get("output", {}).get("final_rollup", []) or []):
+        if not isinstance(bucket, dict):
+            continue
+        write_to = bucket.get("write_to", "rolled_supplier_id")
+        if write_to in preexisting_cols:
+            errors.append(
+                f'output.final_rollup[{i}]: write_to "{write_to}" collides with '
+                f"an existing source/derived/target column. It would overwrite "
+                f"that column and force {write_to}_changed to always-False. "
+                f"Choose a new column name."
+            )
 
     return errors, warnings
 

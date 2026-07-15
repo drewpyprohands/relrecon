@@ -305,3 +305,26 @@ class TestValidation:
         r["output"]["final_rollup"][0]["group_key_tier"] = "bogus"
         with pytest.raises(ValueError):
             validate_recipe(r)
+
+    def test_write_to_colliding_with_target_rejected(self):
+        """write_to == the bucket's target would overwrite it and force the
+        _changed flag always-False; must be rejected (Issue #67, Finding 5)."""
+        r = self._base()
+        r["output"]["final_rollup"][0]["write_to"] = "derived_supplier_id"
+        r["output"]["columns"]["matched"] = [
+            c for c in r["output"]["columns"]["matched"]
+            if not c["field"].startswith("rolled_")
+        ]
+        with pytest.raises(RecipeValidationError):
+            _run(r)
+
+    def test_write_to_colliding_with_source_column_rejected(self):
+        """write_to naming an existing source column is also rejected."""
+        r = self._base()
+        r["output"]["final_rollup"][0]["write_to"] = "parent_name"
+        r["output"]["columns"]["matched"] = [
+            c for c in r["output"]["columns"]["matched"]
+            if not c["field"].startswith("rolled_")
+        ]
+        with pytest.raises(RecipeValidationError):
+            _run(r)
