@@ -1,0 +1,45 @@
+name: Self-Pop Anchor Test
+description: Single phase. Self-match on grp, tie-break lowest supplier_id, inherit as rolled.
+
+sources:
+  src:
+    file: selfpop_anchor.csv
+    type: multi_population
+
+populations:
+  self_pop:
+    source: src
+    record_key: vendor_id
+    filter: []
+
+steps:
+  - name: Rollup SelfPop
+    source: self_pop
+    destination: self_pop
+    match_fields:
+      - source: grp
+        destination: grp
+        method: exact
+        tiers: [raw]
+    inherit:
+      - source: supplier_id
+        as: rolled_supplier_id
+
+output:
+  format: xlsx
+  summary: none
+  match_mode: best_match
+  tie_breaker:
+    column: supplier_id
+    strip_prefix: alpha
+    order: asc
+  columns:
+    matched:
+      - field: vendor_id
+        header: ID
+      - field: grp
+        header: Group
+      - field: supplier_id
+        header: Own SID
+      - field: rolled_supplier_id
+        header: Rolled SID

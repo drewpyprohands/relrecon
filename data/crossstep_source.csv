@@ -1,0 +1,11 @@
+vendor_id,parent_name,l3_fmly_nm,hq_addr1,hq_addr2
+V001,Company XYZ Holdings,Company XYZ,100 Main St,
+V002,Company XYZ Holdings,XYZ Associates,100 Main St,
+V003,Company XYZ Holdings,Company Xyz Inc,100 Main St,
+V004,Alpha Solutions,Alpha Solutions,200 Oak Ave,
+V005,Alpha Solutions,Alpha Solutions,200 Oak Ave,
+V010,Zeta Group,Zeta East,500 Pine Rd,
+V011,Zeta Group,Zeta West,500 Pine Rd,
+V012,Orphan Holding Co,Zeta East,500 Pine Rd,
+V030,Beta Group,Nonmatching AAA,10 Beta St,
+V031,Beta Group,Nonmatching BBB,500 Faraway Rd,

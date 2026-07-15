@@ -1,0 +1,11 @@
+vnd_id,vnd_name,supplier_nm,supplier_id,addr1,addr2
+D001,Company XYZ,Company XYZ Holdings,S2456,100 Main St,
+D002,Company XYZ,Company XYZ Holdings,S1013,100 Main St,
+D003,Company XYZ,Company XYZ Holdings,S2023,100 Main St,
+D004,Beta Corp,Company XYZ Holdings,S0500,100 Main St,
+D005,Alpha Solutions,Alpha Solutions,S5000,200 Oak Ave,
+D006,Alpha Solutions,Alpha Solutions,S1500,200 Oak Ave,
+D007,Zeta East,Zeta Group,S0200,500 Pine Rd,
+D008,Zeta West,Zeta Group,S0100,500 Pine Rd,
+D011,Beta One,Beta Group,S0800,10 Beta St,
+D012,Beta Two,Beta Group,S0400,10 Beta St,
