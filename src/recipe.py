@@ -289,6 +289,37 @@ def validate_recipe(recipe: dict) -> list[str]:
     if "output" in recipe and "format" not in recipe["output"]:
         critical.append("Output missing 'format' field")
 
+    # final_rollup: single-phase terminal aggregation pass (Issue #67)
+    phase_rollups = [
+        p.get("output", {}).get("final_rollup")
+        for p in recipe.get("phases", [])
+    ]
+    if is_multi_phase and any(phase_rollups):
+        critical.append(
+            "output.final_rollup is not supported in multi-phase recipes. "
+            "It is a single-phase terminal pass; remove it or use a "
+            "single-phase recipe."
+        )
+    rollup_buckets = recipe.get("output", {}).get("final_rollup", []) or []
+    write_to_seen: dict[str, int] = {}
+    for i, bucket in enumerate(rollup_buckets):
+        if not isinstance(bucket, dict):
+            continue
+        for sname in bucket.get("steps", []):
+            if sname not in step_names_seen:
+                critical.append(
+                    f'output.final_rollup[{i}]: step "{sname}" names no '
+                    f"existing step. Known steps: {sorted(step_names_seen)}"
+                )
+        write_to = bucket.get("write_to", "rolled_supplier_id")
+        if write_to in write_to_seen:
+            critical.append(
+                f'output.final_rollup: two buckets write to "{write_to}" '
+                f"(buckets {write_to_seen[write_to]} and {i}). "
+                "Each bucket needs a unique write_to."
+            )
+        write_to_seen[write_to] = i
+
     source_pops = {step["source"] for step in all_steps if "source" in step}
     dest_pops = {step["destination"] for step in all_steps if "destination" in step}
 
@@ -653,6 +684,12 @@ def validate_fields(
         for inh in step.get("inherit", []):
             if "as" in inh:
                 known_derived.add(inh["as"])
+    # final_rollup adds a write_to column plus its <write_to>_changed flag
+    for bucket in recipe.get("output", {}).get("final_rollup", []) or []:
+        if isinstance(bucket, dict):
+            write_to = bucket.get("write_to", "rolled_supplier_id")
+            known_derived.add(write_to)
+            known_derived.add(f"{write_to}_changed")
 
     for tab_key in ("matched", "analysis"):
         for i, entry in enumerate(output_columns.get(tab_key, [])):
@@ -688,6 +725,19 @@ def validate_fields(
                             f'output.columns.{tab_key}: variant field "{f}" '
                             f"not found in source data"
                         )
+
+    # final_rollup: group_key/target must resolve to a matched-output column
+    available = all_source_cols | known_derived
+    for i, bucket in enumerate(recipe.get("output", {}).get("final_rollup", []) or []):
+        if not isinstance(bucket, dict):
+            continue
+        for role in ("group_key", "target"):
+            col = bucket.get(role)
+            if col and "_dst" not in col and col not in available:
+                errors.append(
+                    f'output.final_rollup[{i}]: {role} "{col}" not found in '
+                    f"source data or known derived columns"
+                )
 
     return errors, warnings
 
