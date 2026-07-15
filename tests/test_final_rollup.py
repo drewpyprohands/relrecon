@@ -9,6 +9,7 @@ Distinct from per-step tie_breaker (resolves ties within one step).
 import copy
 import os
 import sys
+import tempfile
 
 import polars as pl
 import pytest
@@ -20,6 +21,7 @@ from recipe import (  # noqa: E402
     load_recipe,
     validate_recipe,
 )
+from report import apply_column_mapping, write_raw_data  # noqa: E402
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 RECIPE_DIR = os.path.join(os.path.dirname(__file__), "..", "config", "recipes")
@@ -139,6 +141,32 @@ class TestGroupKeyTier:
         for vid in ("V001", "V002", "V003", "V006"):
             assert rows[vid]["rolled_supplier_id"] == "S0300"
 
+    def test_blank_transformed_keys_do_not_merge(self):
+        """Distinct names that a tier maps to "" must not roll together."""
+        from matching import _apply_final_rollup
+
+        m = pl.DataFrame({
+            "match_step": ["S", "S", "S", "S"],
+            "nm": ["  ", ".", "Real Co", "Real Co"],
+            "sfam": ["S900", "S100", "S500", "S200"],
+        })
+        out = _by_id(
+            _apply_final_rollup(
+                m,
+                [{"steps": ["S"], "group_key": "nm", "group_key_tier": "clean",
+                  "target": "sfam", "strip_prefix": "alpha", "write_to": "rolled"}],
+                {},
+            ),
+            key="nm",
+        )
+        # Blank keys keep their own target (no false merge)...
+        assert out["  "]["rolled"] == "S900"
+        assert out["."]["rolled"] == "S100"
+        assert out["  "]["rolled_changed"] is False
+        assert out["."]["rolled_changed"] is False
+        # ...while a real shared key still rolls to the group min.
+        assert out["Real Co"]["rolled"] == "S200"
+
 
 # ---------------------------------------------------------------------------
 # Non-destructive / no-op guarantee
@@ -169,6 +197,41 @@ class TestNonDestructive:
         left = with_rollup.select(shared).sort("vendor_id")
         right = without.select(shared).sort("vendor_id")
         assert left.equals(right)
+
+    def test_no_op_csv_export_identical(self):
+        """CSV export of the no-rollup recipe matches the with-rollup export
+        with the rolled columns stripped -- byte-identical, header included."""
+        r = _load("crossstep_rollup")
+        out_cfg = r["output"]
+        with_m = _run(copy.deepcopy(r))["matched"]
+
+        r2 = _load("crossstep_rollup")
+        del r2["output"]["final_rollup"]
+        base_cols = [
+            c for c in r2["output"]["columns"]["matched"]
+            if not c["field"].startswith("rolled_")
+        ]
+        r2["output"]["columns"]["matched"] = base_cols
+        without_m = _run(r2)["matched"]
+
+        # Map + write both exports; the with-rollup export restricted to the
+        # base (non-rolled) columns must equal the no-rollup export.
+        rolled_headers = {
+            c["header"] for c in out_cfg["columns"]["matched"]
+            if c["field"].startswith("rolled_")
+        }
+        exp_with = apply_column_mapping(with_m, out_cfg)
+        exp_with = exp_with.drop(
+            [h for h in rolled_headers if h in exp_with.columns]
+        )
+        exp_without = apply_column_mapping(without_m, r2["output"])
+        with tempfile.TemporaryDirectory() as d:
+            p_with = os.path.join(d, "with.csv")
+            p_without = os.path.join(d, "without.csv")
+            write_raw_data(exp_with.sort("Source ID"), p_with, "csv")
+            write_raw_data(exp_without.sort("Source ID"), p_without, "csv")
+            with open(p_with) as f1, open(p_without) as f2:
+                assert f1.read() == f2.read()
 
 
 # ---------------------------------------------------------------------------

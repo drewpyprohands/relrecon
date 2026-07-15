@@ -876,7 +876,14 @@ def _apply_final_rollup(matched: pl.DataFrame, buckets: list,
             scoped = scoped.with_columns(
                 _tb_sort_key_expr(target, tb).alias("_rollup_sort")
             )
-            rolled = scoped.group_by("_rollup_gk").agg(
+            # A null/blank group key is not a family identifier -- never roll
+            # such rows together (they keep their own target). Guards against
+            # tier transforms mapping distinct names to "" (whitespace/
+            # punctuation/stopword-only), which would false-merge families.
+            valid_key = pl.col("_rollup_gk").is_not_null() & (
+                pl.col("_rollup_gk").str.strip_chars() != ""
+            )
+            rolled = scoped.filter(valid_key).group_by("_rollup_gk").agg(
                 pl.col(target)
                 .sort_by("_rollup_sort", descending=descending)
                 .first()
