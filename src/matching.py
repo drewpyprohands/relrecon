@@ -963,8 +963,19 @@ def _load_normalization(norm_cfg, base_dir):
             raw = json.loads(aliases_path.read_text())
             if isinstance(raw, dict) and ("name" in raw or "address" in raw):
                 name_aliases = raw.get("name")
-                addr_aliases = raw.get("address", raw)
+                # A name-only scoped map has no address aliases -- default to
+                # None, never `raw` (which would leak the {name:{...}} wrapper).
+                addr_aliases = raw.get("address")
             else:
+                # Unscoped flat map: applied to addresses only (default). Warn
+                # so name aliases are not silently dropped -- see issue #79.
+                import sys
+                print(
+                    f"[WARN] aliases file '{aliases_path}' is unscoped -> "
+                    "applied to addresses only; use {\"name\": {...}, "
+                    "\"address\": {...}} to reach name fields.",
+                    file=sys.stderr,
+                )
                 addr_aliases = raw
 
     if norm_cfg.get("stopwords"):

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
 from recipe import load_recipe, load_source, filter_population, build_filter_expr, validate_recipe
-from matching import apply_date_gate, match_names_exact, match_names_fuzzy, run_matching_step, run_pipeline, score_addresses_batch
+from matching import _load_normalization, apply_date_gate, match_names_exact, match_names_fuzzy, run_matching_step, run_pipeline, score_addresses_batch
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 RECIPE_PATH = Path(__file__).parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
@@ -162,6 +162,45 @@ def test_normalized_name_tier():
     ]
     for r in _results:
         assert r["passed"], f"Failed: {r}"
+
+
+# --- Name-alias loader/scoping tests (issue #79) ---
+
+def test_scoped_name_alias_matches(tmp_path):
+    """A scoped {name:{...}} alias reaches name fields (regression for #79)."""
+    alias_path = tmp_path / "aliases.json"
+    alias_path.write_text(json.dumps({"name": {"ibm": "international business machines"}}))
+    name_aliases, _, addr_aliases, _ = _load_normalization(
+        {"aliases": str(alias_path)}, base_dir=str(tmp_path)
+    )
+    # Loader wires the name aliases (was silently None before the fix).
+    assert name_aliases == {"ibm": "international business machines"}
+    # Name-only scoped map yields no address aliases (no {name:{...}} leak).
+    assert addr_aliases is None
+
+    src = pl.DataFrame({"name": ["IBM"]})
+    dst = pl.DataFrame({"name": ["International Business Machines"]})
+    result = match_names_exact(
+        src, dst, "name", "name",
+        tiers=["raw", "clean", "normalized"],
+        aliases=name_aliases,
+    )
+    assert result.height == 1
+    assert result["match_tier"].to_list() == ["normalized"]
+
+
+def test_flat_alias_map_is_address_only_and_warns(tmp_path, capsys):
+    """An unscoped flat map applies to addresses only and warns, not silent."""
+    alias_path = tmp_path / "aliases.json"
+    alias_path.write_text(json.dumps({"ave": "avenue"}))
+    name_aliases, _, addr_aliases, _ = _load_normalization(
+        {"aliases": str(alias_path)}, base_dir=str(tmp_path)
+    )
+    assert name_aliases is None
+    assert addr_aliases == {"ave": "avenue"}
+    warning = capsys.readouterr().err
+    assert "unscoped" in warning
+    assert "addresses only" in warning
 
 
 # --- Full pipeline tests ---

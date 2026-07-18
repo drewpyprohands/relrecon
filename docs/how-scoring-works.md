@@ -20,6 +20,13 @@ Address scoring involves three subsystems. Each does one job:
 
 These are stacked, not alternatives. Every address pair goes through all three.
 
+**Alias scoping.** `aliases.json` may be scoped by field type:
+`{"name": {...}, "address": {...}}`. Aliases under `name` apply to name match
+fields; those under `address` apply to address scoring. An unscoped flat map
+(e.g. `{"blvd": "boulevard"}`) applies to **addresses only** — this keeps
+address abbreviations from bleeding into names — and the loader emits a warning.
+To reach name fields, use the scoped form.
+
 ## Name Scoring
 
 Name matching finds candidate pairs. Two methods:
