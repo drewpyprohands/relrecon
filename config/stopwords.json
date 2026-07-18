@@ -1,4 +1,4 @@
 {
-  "name": ["inc", "incorporated", "corp", "corporation", "llc", "ltd", "limited", "co", "company", "plc", "pty", "group", "holdings", "services", "solutions", "international", "intl", "the"],
+  "name": ["inc", "incorporated", "corp", "corporation", "llc", "ltd", "limited", "co", "company", "plc", "pty", "group", "holdings", "services", "solutions", "international", "intl", "the", "airlines"],
   "address": ["suite", "floor", "building", "unit", "room", "dept", "department"]
 }

@@ -1,0 +1,91 @@
+name: Issue Tracing Recipe
+description: >
+  Trace issues with specific matching
+
+sources:
+  source_data:
+    file: austrian.csv
+    type: multi_population
+
+populations:
+  source_pop:
+    source: source_data
+    record_key: vnd_id
+    filter: []
+
+step_defaults:
+  address_support:
+    source: [addr1, addr2]
+    destination: [addr1, addr2]
+    parser: auto
+    tiers: [clean]
+    weights:
+      street_name: 0.75
+  inherit:
+    - source: vnd_id
+      as: derived_vnd_id
+    - source: l1_fmly_id
+      as: derived_l1_fmly_id
+    - source: l1_fmly_nm
+      as: derived_l1_fmly_nm
+    - source: l3_fmly_nm
+      as: derived_l3_fmly_nm
+
+steps:
+  - name: Exact Norm Name Match L3
+    source: source_pop
+    destination: source_pop
+    match_fields:
+      - source: l3_fmly_nm
+        destination: l3_fmly_nm
+        method: exact
+        tiers: [normalized]
+
+
+  - name: Exact Norm Name Match L1
+    source: source_pop
+    destination: source_pop
+    match_fields:
+      - source: l1_fmly_nm
+        destination: l1_fmly_nm
+        method: exact
+        tiers: [normalized]
+
+output:
+  format: xlsx
+  summary: [md, xlsx]
+  match_mode: all_matches
+  tie_breaker:
+    column: l1_fmly_id
+    strip_prefix: alpha
+    order: asc
+  columns:
+    matched:
+      - field: match_step
+        header: Match Source
+      - field: match_tier
+        header: Match Tier
+      - field: name_score
+        header: Name Score
+      - field: vnd_id
+        header: Source VND ID
+      - field: l3_fmly_nm
+        header: Source L3 Name
+      - field: derived_vnd_id
+        header: Dest VND ID
+      - field: derived_l3_fmly_nm
+        header: Dest L3 Name
+      - field: derived_l1_fmly_id
+        header: Parent ID (selected)
+
+    analysis:
+      - field: vnd_id
+        header: Source ID
+      - field: l3_fmly_nm
+        header: Source L3 Name
+      - field: l1_fmly_nm
+        header: Source L1 Name
+      - field: l1_fmly_id
+        header: Source L1 ID
+      - field: reason_code
+        header: Reason
