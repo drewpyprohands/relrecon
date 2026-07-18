@@ -1,14 +1,19 @@
 {
-  "blvd": "boulevard",
-  "ave": "avenue",
-  "dr": "drive",
-  "rd": "road",
-  "ln": "lane",
-  "ct": "court",
-  "pl": "place",
-  "ste": "suite",
-  "fl": "floor",
-  "bldg": "building",
-  "pkwy": "parkway",
-  "hwy": "highway"
+  "name": {
+    "airlines ag": "airlines"
+  },
+  "address": {
+    "blvd": "boulevard",
+    "ave": "avenue",
+    "dr": "drive",
+    "rd": "road",
+    "ln": "lane",
+    "ct": "court",
+    "pl": "place",
+    "ste": "suite",
+    "fl": "floor",
+    "bldg": "building",
+    "pkwy": "parkway",
+    "hwy": "highway"
+  }
 }
