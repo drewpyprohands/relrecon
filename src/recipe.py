@@ -289,6 +289,44 @@ def validate_recipe(recipe: dict) -> list[str]:
     if "output" in recipe and "format" not in recipe["output"]:
         critical.append("Output missing 'format' field")
 
+    # final_rollup: single-phase terminal aggregation pass (Issue #67)
+    phase_rollups = [
+        p.get("output", {}).get("final_rollup")
+        for p in recipe.get("phases", [])
+    ]
+    if is_multi_phase and any(phase_rollups):
+        critical.append(
+            "output.final_rollup is not supported in multi-phase recipes. "
+            "It is a single-phase terminal pass; remove it or use a "
+            "single-phase recipe."
+        )
+    rollup_buckets = recipe.get("output", {}).get("final_rollup", []) or []
+    # Each bucket emits two columns: write_to and <write_to>_changed. No two
+    # buckets may share either name -- overlap would silently overwrite one
+    # bucket's output (including its audit flag) with another's.
+    reserved: dict[str, int] = {}
+    for i, bucket in enumerate(rollup_buckets):
+        if not isinstance(bucket, dict):
+            continue
+        # steps is optional -- omit to apply the bucket to all steps.
+        for sname in bucket.get("steps", []):
+            if sname not in step_names_seen:
+                critical.append(
+                    f'output.final_rollup[{i}]: step "{sname}" names no '
+                    f"existing step. Known steps: {sorted(step_names_seen)}"
+                )
+        write_to = bucket.get("write_to", "rolled_supplier_id")
+        cols = (write_to, f"{write_to}_changed")
+        hit = next((c for c in cols if c in reserved), None)
+        if hit is not None:
+            critical.append(
+                f'output.final_rollup: buckets {reserved[hit]} and {i} both '
+                f'produce column "{hit}". Each bucket needs a unique write_to '
+                "(its <write_to>_changed flag column is reserved too)."
+            )
+        for c in cols:
+            reserved[c] = i
+
     source_pops = {step["source"] for step in all_steps if "source" in step}
     dest_pops = {step["destination"] for step in all_steps if "destination" in step}
 
@@ -653,6 +691,15 @@ def validate_fields(
         for inh in step.get("inherit", []):
             if "as" in inh:
                 known_derived.add(inh["as"])
+    # Columns that exist before the rollup runs (source + static + inherited);
+    # write_to must not collide with any of these (checked below).
+    preexisting_cols = all_source_cols | known_derived
+    # final_rollup adds a write_to column plus its <write_to>_changed flag
+    for bucket in recipe.get("output", {}).get("final_rollup", []) or []:
+        if isinstance(bucket, dict):
+            write_to = bucket.get("write_to", "rolled_supplier_id")
+            known_derived.add(write_to)
+            known_derived.add(f"{write_to}_changed")
 
     for tab_key in ("matched", "analysis"):
         for i, entry in enumerate(output_columns.get(tab_key, [])):
@@ -688,6 +735,34 @@ def validate_fields(
                             f'output.columns.{tab_key}: variant field "{f}" '
                             f"not found in source data"
                         )
+
+    # final_rollup: group_key/target must resolve to a matched-output column
+    available = all_source_cols | known_derived
+    for i, bucket in enumerate(recipe.get("output", {}).get("final_rollup", []) or []):
+        if not isinstance(bucket, dict):
+            continue
+        for role in ("group_key", "target"):
+            col = bucket.get(role)
+            if col and "_dst" not in col and col not in available:
+                errors.append(
+                    f'output.final_rollup[{i}]: {role} "{col}" not found in '
+                    f"source data or known derived columns"
+                )
+
+    # write_to must name a NEW column. Colliding with an existing source,
+    # derived, or target column would silently overwrite it, and the
+    # <write_to>_changed flag would be structurally always-False (Issue #67).
+    for i, bucket in enumerate(recipe.get("output", {}).get("final_rollup", []) or []):
+        if not isinstance(bucket, dict):
+            continue
+        write_to = bucket.get("write_to", "rolled_supplier_id")
+        if write_to in preexisting_cols:
+            errors.append(
+                f'output.final_rollup[{i}]: write_to "{write_to}" collides with '
+                f"an existing source/derived/target column. It would overwrite "
+                f"that column and force {write_to}_changed to always-False. "
+                f"Choose a new column name."
+            )
 
     return errors, warnings
 

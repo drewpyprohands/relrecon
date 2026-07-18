@@ -832,6 +832,92 @@ def _resolve_matches(all_matched, track_field, match_mode, tie_breaker=None):
     return combined
 
 
+def _rollup_group_key(df: pl.DataFrame, col: str, tier: str, alias: str,
+                      norm: dict) -> pl.DataFrame:
+    """Add the tier-transformed group key column (reuses matching tier funcs)."""
+    if tier == "normalized":
+        return _normalized_column(
+            df, col, alias, norm.get("name_aliases"), norm.get("name_stopwords")
+        )
+    if tier == "clean":
+        return _clean_column(df, col, alias)
+    return df.with_columns(pl.col(col).cast(pl.String).alias(alias))
+
+
+def _resolve_rollup_steps(raw_steps, step_names: list) -> list:
+    """Resolve a bucket's ``steps`` to concrete step names.
+
+    ``steps`` is optional: omit it (None) to apply the bucket to all steps.
+    """
+    if raw_steps is None:
+        return list(step_names or [])
+    return list(raw_steps)
+
+
+def _apply_final_rollup(matched: pl.DataFrame, buckets: list,
+                        norm: dict, step_names: list = None) -> pl.DataFrame:
+    """Terminal group-aggregation rollup over the resolved matched set.
+
+    Per bucket, scope matched rows to ``steps``, group by the tier-transformed
+    ``group_key``, and write the tie-broken min of ``target`` to ``write_to``
+    for every group member. Rows outside ``steps`` keep their own ``target`` in
+    ``write_to``. Sets ``<write_to>_changed`` where ``write_to`` differs from the
+    row's own ``target``. Non-destructive: original columns are untouched.
+    """
+    for bucket in buckets:
+        steps = _resolve_rollup_steps(bucket.get("steps"), step_names)
+        group_key = bucket["group_key"]
+        tier = bucket.get("group_key_tier", "raw")
+        target = bucket["target"]
+        write_to = bucket.get("write_to", "rolled_supplier_id")
+        tb = {
+            "strip_prefix": bucket.get("strip_prefix", ""),
+            "order": bucket.get("order", "asc"),
+        }
+        descending = tb["order"] == "desc"
+        flag_col = f"{write_to}_changed"
+
+        in_scope = pl.col("match_step").is_in(steps)
+        scoped = matched.filter(in_scope) if "match_step" in matched.columns \
+            else matched.head(0)
+
+        if scoped.height > 0:
+            scoped = _rollup_group_key(scoped, group_key, tier, "_rollup_gk", norm)
+            scoped = scoped.with_columns(
+                _tb_sort_key_expr(target, tb).alias("_rollup_sort")
+            )
+            # A null/blank group key is not a family identifier -- never roll
+            # such rows together (they keep their own target). Guards against
+            # tier transforms mapping distinct names to "" (whitespace/
+            # punctuation/stopword-only), which would false-merge families.
+            valid_key = pl.col("_rollup_gk").is_not_null() & (
+                pl.col("_rollup_gk").str.strip_chars() != ""
+            )
+            rolled = scoped.filter(valid_key).group_by("_rollup_gk").agg(
+                pl.col(target)
+                .sort_by("_rollup_sort", descending=descending)
+                .first()
+                .alias("_rolled_val")
+            )
+            matched = _rollup_group_key(matched, group_key, tier, "_rollup_gk", norm)
+            matched = matched.join(rolled, on="_rollup_gk", how="left")
+            matched = matched.with_columns(
+                pl.when(in_scope & pl.col("_rolled_val").is_not_null())
+                .then(pl.col("_rolled_val"))
+                .otherwise(pl.col(target))
+                .alias(write_to)
+            ).drop(["_rollup_gk", "_rolled_val"])
+        else:
+            matched = matched.with_columns(pl.col(target).alias(write_to))
+
+        matched = matched.with_columns(
+            pl.col(write_to).cast(pl.String)
+            .ne_missing(pl.col(target).cast(pl.String))
+            .alias(flag_col)
+        )
+    return matched
+
+
 def _build_unmatched(pop1_df, matched_source_keys, track_field, all_rejections):
     """Build unmatched DataFrame with reason codes."""
     if pop1_df.height > 0 and track_field in pop1_df.columns:
@@ -1069,6 +1155,11 @@ def _run_single_phase(recipe, sources, norm, timings):
     combined = _resolve_matches(
         phase_result["all_matched"], track_field, match_mode, tie_breaker
     )
+
+    final_rollup = recipe.get("output", {}).get("final_rollup")
+    if final_rollup and combined.height > 0:
+        step_names = [s.get("name") for s in recipe.get("steps", [])]
+        combined = _apply_final_rollup(combined, final_rollup, norm, step_names)
 
     pop1_name = recipe["steps"][0]["source"]
     pop1_df = populations.get(pop1_name, {}).get("df", pl.DataFrame())

@@ -1,0 +1,5 @@
+vendor_id,grp,supplier_id,co_name
+A,G1,S300,Acme
+B,G1,S100,Acme
+C,G1,S200,Acme
+D,G2,S500,Acme

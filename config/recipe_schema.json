@@ -657,6 +657,64 @@
           },
           "description": "Tie-breaker for selecting among duplicate destination matches."
         },
+        "final_rollup": {
+          "type": "array",
+          "description": "Terminal, non-destructive rollup pass (single-phase only). Each bucket rolls a group to the tie-broken min of a target column across the given steps, writing an additive column plus a <write_to>_changed audit flag. Distinct from per-step tie_breaker, which resolves ties within one step.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "group_key",
+              "target"
+            ],
+            "properties": {
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                },
+                "description": "Optional. Explicit match_step names this bucket applies to. Omit to apply to all steps. Rows matched in other steps are unaffected."
+              },
+              "group_key": {
+                "type": "string",
+                "description": "Matched-output column to group by (after group_key_tier transform)."
+              },
+              "group_key_tier": {
+                "type": "string",
+                "enum": [
+                  "raw",
+                  "clean",
+                  "normalized"
+                ],
+                "default": "raw",
+                "description": "Tier transform applied to group_key before grouping (same tiers as name matching)."
+              },
+              "target": {
+                "type": "string",
+                "description": "Matched-output column minimized within each group."
+              },
+              "strip_prefix": {
+                "type": "string",
+                "description": "Same semantics as tie_breaker.strip_prefix ('alpha' or a literal prefix)."
+              },
+              "order": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ],
+                "default": "asc",
+                "description": "Sort order for the target min: 'asc' (lowest wins, default) or 'desc' (highest wins)."
+              },
+              "write_to": {
+                "type": "string",
+                "default": "rolled_supplier_id",
+                "description": "Additive column to hold the rolled value. Must be unique across buckets. The audit flag is named <write_to>_changed."
+              }
+            }
+          }
+        },
         "columns": {
           "type": "object",
           "additionalProperties": false,
