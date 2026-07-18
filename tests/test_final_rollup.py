@@ -302,6 +302,15 @@ class TestValidation:
         with pytest.raises(ValueError, match="unique write_to"):
             validate_recipe(r)
 
+    def test_write_to_colliding_with_other_flag_rejected(self):
+        """One bucket's write_to must not equal another's <write_to>_changed
+        flag column -- it would silently overwrite that flag."""
+        r = self._base()
+        r["output"]["final_rollup"][0]["write_to"] = "rolled"
+        r["output"]["final_rollup"][1]["write_to"] = "rolled_changed"
+        with pytest.raises(ValueError, match="rolled_changed"):
+            validate_recipe(r)
+
     def test_missing_group_key_column_rejected(self):
         r = self._base()
         r["output"]["final_rollup"][0]["group_key"] = "nonexistent_col"

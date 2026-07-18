@@ -301,7 +301,10 @@ def validate_recipe(recipe: dict) -> list[str]:
             "single-phase recipe."
         )
     rollup_buckets = recipe.get("output", {}).get("final_rollup", []) or []
-    write_to_seen: dict[str, int] = {}
+    # Each bucket emits two columns: write_to and <write_to>_changed. No two
+    # buckets may share either name -- overlap would silently overwrite one
+    # bucket's output (including its audit flag) with another's.
+    reserved: dict[str, int] = {}
     for i, bucket in enumerate(rollup_buckets):
         if not isinstance(bucket, dict):
             continue
@@ -313,13 +316,16 @@ def validate_recipe(recipe: dict) -> list[str]:
                     f"existing step. Known steps: {sorted(step_names_seen)}"
                 )
         write_to = bucket.get("write_to", "rolled_supplier_id")
-        if write_to in write_to_seen:
+        cols = (write_to, f"{write_to}_changed")
+        hit = next((c for c in cols if c in reserved), None)
+        if hit is not None:
             critical.append(
-                f'output.final_rollup: two buckets write to "{write_to}" '
-                f"(buckets {write_to_seen[write_to]} and {i}). "
-                "Each bucket needs a unique write_to."
+                f'output.final_rollup: buckets {reserved[hit]} and {i} both '
+                f'produce column "{hit}". Each bucket needs a unique write_to '
+                "(its <write_to>_changed flag column is reserved too)."
             )
-        write_to_seen[write_to] = i
+        for c in cols:
+            reserved[c] = i
 
     source_pops = {step["source"] for step in all_steps if "source" in step}
     dest_pops = {step["destination"] for step in all_steps if "destination" in step}
