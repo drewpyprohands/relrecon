@@ -2,6 +2,10 @@ name: Issue Tracing Recipe
 description: >
   Trace issues with specific matching
 
+normalization:
+  aliases: config/aliases.json
+  stopwords: config/stopwords.json
+
 sources:
   source_data:
     file: austrian.csv
