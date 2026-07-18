@@ -664,7 +664,6 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "steps",
               "group_key",
               "target"
             ],
@@ -675,7 +674,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Explicit match_step names this bucket applies to. Rows matched in other steps are unaffected."
+                "description": "Optional. Explicit match_step names this bucket applies to. Omit to apply to all steps. Rows matched in other steps are unaffected."
               },
               "group_key": {
                 "type": "string",

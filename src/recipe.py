@@ -305,6 +305,7 @@ def validate_recipe(recipe: dict) -> list[str]:
     for i, bucket in enumerate(rollup_buckets):
         if not isinstance(bucket, dict):
             continue
+        # steps is optional -- omit to apply the bucket to all steps.
         for sname in bucket.get("steps", []):
             if sname not in step_names_seen:
                 critical.append(

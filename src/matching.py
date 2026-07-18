@@ -844,8 +844,18 @@ def _rollup_group_key(df: pl.DataFrame, col: str, tier: str, alias: str,
     return df.with_columns(pl.col(col).cast(pl.String).alias(alias))
 
 
+def _resolve_rollup_steps(raw_steps, step_names: list) -> list:
+    """Resolve a bucket's ``steps`` to concrete step names.
+
+    ``steps`` is optional: omit it (None) to apply the bucket to all steps.
+    """
+    if raw_steps is None:
+        return list(step_names or [])
+    return list(raw_steps)
+
+
 def _apply_final_rollup(matched: pl.DataFrame, buckets: list,
-                        norm: dict) -> pl.DataFrame:
+                        norm: dict, step_names: list = None) -> pl.DataFrame:
     """Terminal group-aggregation rollup over the resolved matched set.
 
     Per bucket, scope matched rows to ``steps``, group by the tier-transformed
@@ -855,7 +865,7 @@ def _apply_final_rollup(matched: pl.DataFrame, buckets: list,
     row's own ``target``. Non-destructive: original columns are untouched.
     """
     for bucket in buckets:
-        steps = bucket["steps"]
+        steps = _resolve_rollup_steps(bucket.get("steps"), step_names)
         group_key = bucket["group_key"]
         tier = bucket.get("group_key_tier", "raw")
         target = bucket["target"]
@@ -1148,7 +1158,8 @@ def _run_single_phase(recipe, sources, norm, timings):
 
     final_rollup = recipe.get("output", {}).get("final_rollup")
     if final_rollup and combined.height > 0:
-        combined = _apply_final_rollup(combined, final_rollup, norm)
+        step_names = [s.get("name") for s in recipe.get("steps", [])]
+        combined = _apply_final_rollup(combined, final_rollup, norm, step_names)
 
     pop1_name = recipe["steps"][0]["source"]
     pop1_df = populations.get(pop1_name, {}).get("df", pl.DataFrame())

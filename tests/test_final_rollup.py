@@ -68,6 +68,20 @@ class TestDestIdentityBucket:
             differs = r["rolled_supplier_id"] != r["derived_supplier_id"]
             assert r["rolled_supplier_id_changed"] == differs
 
+    def test_steps_omitted_applies_to_all_steps(self):
+        """Omitting `steps` is equivalent to listing every step explicitly."""
+        explicit = _by_id(_run(_load("crossstep_rollup"))["matched"])
+        r = _load("crossstep_rollup")
+        # The dest-identity bucket already lists all four steps; dropping the
+        # key must not change the rolled result.
+        del r["output"]["final_rollup"][0]["steps"]
+        omitted = _by_id(_run(r)["matched"])
+        for vid in explicit:
+            assert (omitted[vid]["rolled_supplier_id"]
+                    == explicit[vid]["rolled_supplier_id"])
+            assert (omitted[vid]["rolled_supplier_id_changed"]
+                    == explicit[vid]["rolled_supplier_id_changed"])
+
 
 # ---------------------------------------------------------------------------
 # Tier-name bucket (group_key: derived_dest_name, L3 steps only)

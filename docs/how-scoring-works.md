@@ -348,7 +348,7 @@ For fuzzy matching, the tie-breaker only matters when multiple destination recor
 ```yaml
 output:
   final_rollup:
-    - steps: [Exact Name Match L3, Exact Name Match L1]  # explicit step names
+    - steps: [Exact Name Match L3, Exact Name Match L1]  # optional; omit for all steps
       group_key: derived_supplier_nm    # matched-output column to group by
       group_key_tier: normalized        # raw | clean | normalized (default raw)
       target: derived_supplier_id       # column minimized within the group
@@ -359,14 +359,14 @@ output:
 
 ### Semantics
 
-- Rows are filtered to `match_step in steps`, grouped by `group_key` (after the `group_key_tier` transform), and every member is assigned the tie-broken min of `target` (reusing `strip_prefix`/`order`).
+- Rows are filtered to `match_step in steps` (all steps when `steps` is omitted), grouped by `group_key` (after the `group_key_tier` transform), and every member is assigned the tie-broken min of `target` (reusing `strip_prefix`/`order`).
 - The result is written to `write_to`; rows outside `steps` keep their own `target` value there. A boolean `<write_to>_changed` flag is set where `write_to` differs from the row's own `target`.
 - Implemented as a group aggregation (not self-population matching), so a group's minimum-holder is included by construction and retains its own id.
 - Grouping is exact equality after the tier transform -- entity variance belongs in matching steps, not here. Multiple buckets are allowed but must use distinct `write_to` columns.
 
 ### Validation
 
-`final_rollup` is rejected in multi-phase recipes, on unknown `steps` names, on `group_key`/`target` columns absent from the matched output, on invalid `group_key_tier`/`order` enums, and on two buckets sharing a `write_to`.
+`final_rollup` is rejected in multi-phase recipes, on unknown `steps` names, on `group_key`/`target` columns absent from the matched output, on invalid `group_key_tier`/`order` enums, on two buckets sharing a `write_to`, and on a `write_to` that collides with an existing source/derived/target column (which would overwrite it and force `<write_to>_changed` always-false). `steps` is optional -- omit it to apply the bucket to all steps.
 
 ## Same-Population Matching
 
