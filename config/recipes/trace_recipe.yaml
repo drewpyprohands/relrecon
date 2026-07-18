@@ -63,6 +63,14 @@ output:
     column: l1_fmly_id
     strip_prefix: alpha
     order: asc
+  final_rollup:
+    - steps: [Exact Norm Name Match L3, Exact Norm Name Match L1]
+      group_key: l3_fmly_nm
+      group_key_tier: normalized
+      target: l1_fmly_id
+      strip_prefix: alpha
+      order: asc
+      write_to: rolled_l1_fmly_id
   columns:
     matched:
       - field: match_step
@@ -81,6 +89,10 @@ output:
         header: Dest L3 Name
       - field: derived_l1_fmly_id
         header: Parent ID (selected)
+      - field: rolled_l1_fmly_id
+        header: Rolled Parent ID
+      - field: rolled_l1_fmly_id_changed
+        header: Rolled Changed
 
     analysis:
       - field: vnd_id

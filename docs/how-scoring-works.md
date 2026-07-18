@@ -332,6 +332,42 @@ output:
 
 For fuzzy matching, the tie-breaker only matters when multiple destination records produce the same fuzzy score. When scores differ, the highest score always wins regardless of tie-breaker preference. This is correct behavior -- match quality should take priority over arbitrary column preferences.
 
+## Final Rollup (output.final_rollup)
+
+`tie_breaker` resolves ties **within a single matching step**. Records of the same real-world family that match in **different** steps (one via exact L3, another via exact L1) each keep the value of their own step -- the tie-breaker cannot unify them. `final_rollup` is a **terminal, non-destructive** pass that runs once after all matching and resolution, rolling a configurable group to its lowest (or highest) target value.
+
+| | `tie_breaker` | `final_rollup` |
+|---|---|---|
+| When | during matching (per step) | after resolution (terminal) |
+| Scope | one step's duplicate matches | a group across chosen steps |
+| Effect | selects the surviving match | adds columns; originals untouched |
+| Recipes | single-phase (multi-phase gap, tracked separately) | single-phase only |
+
+### Configuration
+
+```yaml
+output:
+  final_rollup:
+    - steps: [Exact Name Match L3, Exact Name Match L1]  # explicit step names
+      group_key: derived_supplier_nm    # matched-output column to group by
+      group_key_tier: normalized        # raw | clean | normalized (default raw)
+      target: derived_supplier_id       # column minimized within the group
+      strip_prefix: alpha               # same semantics as tie_breaker
+      order: asc                         # asc (lowest wins, default) | desc
+      write_to: rolled_supplier_id       # additive output column (default)
+```
+
+### Semantics
+
+- Rows are filtered to `match_step in steps`, grouped by `group_key` (after the `group_key_tier` transform), and every member is assigned the tie-broken min of `target` (reusing `strip_prefix`/`order`).
+- The result is written to `write_to`; rows outside `steps` keep their own `target` value there. A boolean `<write_to>_changed` flag is set where `write_to` differs from the row's own `target`.
+- Implemented as a group aggregation (not self-population matching), so a group's minimum-holder is included by construction and retains its own id.
+- Grouping is exact equality after the tier transform -- entity variance belongs in matching steps, not here. Multiple buckets are allowed but must use distinct `write_to` columns.
+
+### Validation
+
+`final_rollup` is rejected in multi-phase recipes, on unknown `steps` names, on `group_key`/`target` columns absent from the matched output, on invalid `group_key_tier`/`order` enums, and on two buckets sharing a `write_to`.
+
 ## Same-Population Matching
 
 When a step's `source` and `destination` refer to the same population, the pipeline automatically enables self-exclusion: records won't match against themselves.
