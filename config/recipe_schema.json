@@ -566,13 +566,54 @@
           "description": "Column in the enrichment source to join on (required when mode=enriched). Must exist in both the source and the matched results."
         },
         "format": {
-          "type": "string",
-          "enum": [
-            "xlsx",
-            "csv",
-            "parquet"
-          ],
-          "description": "Data export format. CSV/Parquet produce raw data files. XLSX produces raw data (single Data tab) unless summary includes xlsx."
+          "description": "Data export format(s). A single string, or a list to emit several formats in one run. CSV/Parquet produce raw data files. XLSX produces raw data (single Data tab) unless summary includes xlsx.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "xlsx",
+                "csv",
+                "parquet"
+              ]
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "xlsx",
+                  "csv",
+                  "parquet"
+                ]
+              }
+            }
+          ]
+        },
+        "matched_unmatched": {
+          "description": "Which matched/unmatched view(s) to emit. 'separate' = today's matched + unmatched artifacts. 'merged' = matched table with unmatched source rows appended (final is_unmatched column). A list emits all listed views. Absent = legacy behavior (separate artifacts, honoring emit_unmatched); merged requires explicit config. Takes precedence over emit_unmatched. Single-phase recipes only.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "merged",
+                "separate"
+              ]
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "merged",
+                  "separate"
+                ]
+              }
+            }
+          ]
         },
         "path": {
           "type": "string",

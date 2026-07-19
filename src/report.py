@@ -250,11 +250,38 @@ def _build_columns_from_recipe(recipe_columns: list, df: pl.DataFrame) -> list:
     return resolved
 
 
+def _merged_tab_frame(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame,
+                      main_cols: list) -> pl.DataFrame:
+    """Build the merged Matched-tab frame: matched rows then unmatched rows.
+
+    Columns follow the resolved ``main_cols`` (matched layout). Unmatched
+    rows carry the ``match_step`` sentinel ``unmatched`` and empty values in
+    columns they lack, plus a final ``is_unmatched`` boolean flag.
+    """
+    names = [c for c, _ in main_cols]
+    matched_side = matched_df.select(names).with_columns(
+        pl.lit(False).alias("is_unmatched")
+    )
+    u_exprs = []
+    for col_name in names:
+        if col_name == "match_step":
+            u_exprs.append(pl.lit("unmatched").alias(col_name))
+        elif col_name in unmatched_df.columns:
+            u_exprs.append(pl.col(col_name).alias(col_name))
+        else:
+            u_exprs.append(pl.lit(None).alias(col_name))
+    unmatched_side = unmatched_df.select(u_exprs).with_columns(
+        pl.lit(True).alias("is_unmatched")
+    )
+    return pl.concat([matched_side, unmatched_side], how="vertical_relaxed")
+
+
 def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None = None,
                     output_path: str = "", stats: Optional[dict] = None,
                     recipe: Optional[dict] = None,
                     recipe_file: str | None = None,
-                    echo_recipe: Optional[dict] = None) -> str:
+                    echo_recipe: Optional[dict] = None,
+                    merged: bool = False) -> str:
     """Generate the Excel report with Summary, Matched, and Analysis tabs.
 
     Args:
@@ -269,6 +296,9 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
         echo_recipe: Optional recipe dict for the Recipe tab. Defaults to
                 recipe. Pass the full multi-phase recipe here when recipe
                 is a phase-scoped mini_recipe, so the tab round-trips.
+        merged: When True, unmatched source rows are appended into the
+                Matched tab (match_step sentinel + is_unmatched flag),
+                per the merged output view. Analysis tab is unchanged.
 
     Returns:
         Path to the generated report
@@ -287,7 +317,8 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
     ws_main = wb.active
     ws_main.title = "Matched"
 
-    if matched_df.height > 0:
+    merged_active = merged and unmatched_df is not None
+    if matched_df.height > 0 or (merged_active and matched_df.width > 0):
         if recipe_columns and "matched" in recipe_columns:
             # Recipe-driven columns
             matched_df = _coalesce_variant_columns(matched_df, recipe_columns["matched"])
@@ -297,8 +328,14 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
             matched_df = _coalesce_dest_columns(matched_df)
             main_cols = _resolve_columns(matched_df, MAIN_REPORT_COLUMNS + DEST_COLUMNS)
 
+        if merged_active:
+            write_df = _merged_tab_frame(matched_df, unmatched_df, main_cols)
+            main_cols = main_cols + [("is_unmatched", "is_unmatched")]
+        else:
+            write_df = matched_df
+
         _write_headers(ws_main, main_cols)
-        _write_data(ws_main, matched_df, main_cols)
+        _write_data(ws_main, write_df, main_cols)
         _auto_width(ws_main, main_cols)
 
         # Freeze top row
@@ -467,6 +504,77 @@ def write_unmatched_export(unmatched_df, output_cfg: dict, path: str, fmt: str):
     export_df = apply_column_mapping(unmatched_df, output_cfg, key="analysis")
     write_raw_data(export_df, path, fmt)
     return path
+
+
+def _resolve_merged_columns(matched_df, unmatched_df, output_cfg: dict,
+                            derived: set | None = None) -> list:
+    """Ordered (field, header) list for the merged raw export.
+
+    Follows ``output.columns.matched`` when present, keeping any entry whose
+    field resolves in the matched/unmatched frames, is the ``match_step``
+    sentinel, or is a known derived column (so derived columns still appear
+    in an all-unmatched run where the matched frame is empty). Falls back to
+    the matched frame's own columns when no mapping is configured.
+    """
+    derived = derived or set()
+    col_defs = (output_cfg.get("columns") or {}).get("matched")
+    if not col_defs:
+        base = list(matched_df.columns) or list(unmatched_df.columns)
+        return [(c, c) for c in base]
+
+    resolved = []
+    for entry in col_defs:
+        header = entry.get("header")
+        field = None
+        if "field" in entry:
+            field = entry["field"]
+        elif "fields" in entry:
+            for f in entry["fields"]:
+                if f in matched_df.columns or f in unmatched_df.columns:
+                    field = f
+                    break
+            if field is None and entry["fields"]:
+                field = entry["fields"][0]
+        if field is None:
+            continue
+        if (field in matched_df.columns or field in unmatched_df.columns
+                or field == "match_step" or field in derived):
+            resolved.append((field, header or field))
+    return resolved
+
+
+def build_merged_frame(matched_df, unmatched_df, output_cfg: dict,
+                       derived: set | None = None):
+    """Matched rows + unmatched source rows as one presentation frame.
+
+    Columns follow output.columns.matched (renamed to headers). Unmatched
+    rows carry the match_step sentinel 'unmatched' and empty values in the
+    columns they lack. A final boolean is_unmatched column flags the origin
+    (false for matched rows, true for unmatched). is_unmatched lives only in
+    the merged frame -- it is not a registered derived column. Emitted even
+    when there are zero unmatched rows.
+    """
+    cols = _resolve_merged_columns(matched_df, unmatched_df, output_cfg, derived)
+
+    def _side(df, is_unmatched: bool):
+        exprs = []
+        for field, header in cols:
+            if is_unmatched and field == "match_step":
+                expr = pl.lit("unmatched")
+            elif field in df.columns:
+                expr = pl.col(field)
+            else:
+                expr = pl.lit(None)
+            exprs.append(expr.alias(header))
+        side = df.select(exprs).with_columns(pl.lit(is_unmatched).alias("is_unmatched"))
+        # A 0-column, 0-row frame broadcasts literals to a phantom row; drop it.
+        return side.clear() if df.height == 0 else side
+
+    matched_side = _side(matched_df, False)
+    if unmatched_df is None:
+        return matched_side
+    unmatched_side = _side(unmatched_df, True)
+    return pl.concat([matched_side, unmatched_side], how="vertical_relaxed")
 
 
 def enrich_join(source_df, matched_df, enrich_key: str):

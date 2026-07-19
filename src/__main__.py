@@ -138,42 +138,84 @@ def _write_output(
     mermaid_mode: str = "default",
     timing: dict | None = None,
 ):
-    """Write output files for a single-phase recipe (backward compatible)."""
+    """Write output files for a single-phase recipe (backward compatible).
+
+    Emits every configured ``format`` (single string or list). For each raw
+    data format, ``matched_unmatched`` selects the views: ``separate`` writes
+    today's matched + unmatched artifacts, ``merged`` writes a
+    ``{base}_merged.{ext}`` file. When the key is absent, behavior is the
+    legacy path (matched artifact, plus an unmatched companion iff
+    ``emit_unmatched``). xlsx report output folds merged into the Matched tab.
+    """
     import time
 
-    from recipe import resolve_summary_modes
+    from recipe import (
+        known_derived_columns,
+        normalize_formats,
+        resolve_matched_unmatched,
+        resolve_summary_modes,
+    )
     from report import (
         apply_column_mapping,
+        build_merged_frame,
         generate_report,
         write_raw_data,
         write_unmatched_export,
     )
 
     summary_modes = resolve_summary_modes(output_cfg)
-    fmt = output_cfg.get("format", "xlsx")
+    formats = normalize_formats(output_cfg, default="xlsx")
+    mu_modes = resolve_matched_unmatched(output_cfg)
+    derived = known_derived_columns(recipe)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    if "xlsx" in summary_modes and fmt == "xlsx":
-        # Legacy mode: xlsx format + xlsx summary = formatted report
-        t_report = time.time()
-        report_path = generate_report(
-            matched_df, unmatched_df, output_path,
-            stats=stats, recipe=recipe, recipe_file=recipe_file,
-        )
-        print(f"Report saved: {report_path} ({time.time() - t_report:.2f}s)")
+    if mu_modes is None:
+        # Legacy: matched artifact always; unmatched companion iff emit_unmatched.
+        emit_separate, emit_merged = True, False
+        emit_companion = bool(output_cfg.get("emit_unmatched"))
     else:
-        # Raw data export
-        export_df = apply_column_mapping(matched_df, output_cfg)
-        write_raw_data(export_df, output_path, fmt)
-        print(f"Data saved: {output_path} ({fmt}, {export_df.height} rows)")
+        # matched_unmatched wins; emit_unmatched is ignored (deprecated).
+        emit_separate = "separate" in mu_modes
+        emit_merged = "merged" in mu_modes
+        emit_companion = emit_separate
 
-        if output_cfg.get("emit_unmatched") and unmatched_df is not None:
-            unmatched_path = output_path.rsplit(".", 1)[0] + f"_unmatched.{fmt}"
-            written = write_unmatched_export(
-                unmatched_df, output_cfg, unmatched_path, fmt,
+    base = output_path.rsplit(".", 1)[0]
+
+    for fmt in formats:
+        ext = fmt if fmt in ("csv", "parquet") else "xlsx"
+        fmt_path = f"{base}.{ext}"
+
+        if fmt == "xlsx" and "xlsx" in summary_modes:
+            # Formatted xlsx report (Matched/Analysis/Summary). merged folds
+            # unmatched into the Matched tab. Both separate and merged share
+            # this one file.
+            t_report = time.time()
+            report_path = generate_report(
+                matched_df, unmatched_df, fmt_path,
+                stats=stats, recipe=recipe, recipe_file=recipe_file,
+                merged=emit_merged,
             )
-            if written:
-                print(f"Unmatched saved: {written} ({fmt}, {unmatched_df.height} rows)")
+            print(f"Report saved: {report_path} ({time.time() - t_report:.2f}s)")
+            continue
+
+        if emit_separate:
+            export_df = apply_column_mapping(matched_df, output_cfg)
+            write_raw_data(export_df, fmt_path, fmt)
+            print(f"Data saved: {fmt_path} ({fmt}, {export_df.height} rows)")
+
+            if emit_companion and unmatched_df is not None:
+                unmatched_path = f"{base}_unmatched.{ext}"
+                written = write_unmatched_export(
+                    unmatched_df, output_cfg, unmatched_path, fmt,
+                )
+                if written:
+                    print(f"Unmatched saved: {written} ({fmt}, {unmatched_df.height} rows)")
+
+        if emit_merged:
+            merged_df = build_merged_frame(matched_df, unmatched_df, output_cfg, derived)
+            merged_path = f"{base}_merged.{ext}"
+            write_raw_data(merged_df, merged_path, fmt)
+            print(f"Merged saved: {merged_path} ({fmt}, {merged_df.height} rows)")
 
     if "md" in summary_modes:
         try:
@@ -189,13 +231,15 @@ def _write_output(
         except Exception as exc:
             print(f"[WARN] Summary generation failed: {exc}", file=sys.stderr)
 
-    if "xlsx" in summary_modes and fmt != "xlsx":
-        # Summary xlsx report alongside CSV/parquet data
+    if "xlsx" in summary_modes and "xlsx" not in formats:
+        # Summary xlsx report alongside CSV/parquet data (only when xlsx was
+        # not itself a data format -- otherwise the loop already wrote it).
         try:
-            report_path = output_path.rsplit(".", 1)[0] + "_report.xlsx"
+            report_path = base + "_report.xlsx"
             generate_report(
                 matched_df, unmatched_df, report_path,
                 stats=stats, recipe=recipe, recipe_file=recipe_file,
+                merged=emit_merged,
             )
             print(f"Report saved: {report_path}")
         except Exception as exc:
@@ -676,10 +720,12 @@ def main() -> int:
         if output_path is None:
             recipe_name = recipe.get("name", "report").lower().replace(" ", "_")
             recipe_name = "".join(c if c.isalnum() or c == "_" else "" for c in recipe_name)
-            from recipe import resolve_summary_modes
-            fmt = output_cfg.get("format", "xlsx")
+            from recipe import normalize_formats, resolve_summary_modes
+            formats = normalize_formats(output_cfg, default="xlsx")
             summary_modes = resolve_summary_modes(output_cfg)
-            # Legacy xlsx report mode: keep .xlsx extension
+            # Base extension follows the first format (a list emits all of them;
+            # _write_output re-derives per-format paths from this base).
+            fmt = formats[0]
             if fmt == "xlsx" and "xlsx" in summary_modes:
                 ext = "xlsx"
             else:
