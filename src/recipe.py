@@ -229,8 +229,25 @@ def validate_recipe(recipe: dict) -> list[str]:
                 "output: mode=enriched requires 'enrich_key'"
             )
 
+    # matched_unmatched is single-phase only (multi-phase support deferred).
+    if is_multi_phase:
+        for i, p in enumerate(recipe.get("phases", [])):
+            if "matched_unmatched" in p.get("output", {}):
+                pname = p.get("name", f"Phase {i + 1}")
+                critical.append(
+                    f"{pname}: output.matched_unmatched is not supported in "
+                    "multi-phase recipes. Use a single-phase recipe."
+                )
+
     # Deprecation warnings
     def _check_output_block(output_block: dict, label: str) -> None:
+        # matched_unmatched takes precedence over the deprecated emit_unmatched.
+        if "matched_unmatched" in output_block and "emit_unmatched" in output_block:
+            warnings.append(
+                f"{label}: emit_unmatched is deprecated and ignored when "
+                "matched_unmatched is set. matched_unmatched takes precedence. "
+                "Remove emit_unmatched."
+            )
         if "tabs" in output_block:
             warnings.append(
                 f"{label}: 'tabs' is deprecated and ignored. "
@@ -244,6 +261,7 @@ def validate_recipe(recipe: dict) -> list[str]:
             )
         if (
             output_block.get("emit_unmatched")
+            and "matched_unmatched" not in output_block
             and output_block.get("format") == "xlsx"
             and "xlsx" in resolve_summary_modes(output_block)
         ):
@@ -279,6 +297,12 @@ def validate_recipe(recipe: dict) -> list[str]:
                 critical.append(f"Step {i} ('{step.get('name', '?')}') missing '{k}'")
         sname = step.get("name")
         if sname is not None:
+            if sname == "unmatched":
+                critical.append(
+                    'Step name "unmatched" is reserved: the merged output view '
+                    "uses it as the match_step sentinel for unmatched rows. "
+                    "Rename this step."
+                )
             if sname in step_names_seen:
                 critical.append(
                     f'Duplicate step name "{sname}" (steps {step_names_seen[sname]} and {i}). '
@@ -288,6 +312,31 @@ def validate_recipe(recipe: dict) -> list[str]:
 
     if "output" in recipe and "format" not in recipe["output"]:
         critical.append("Output missing 'format' field")
+
+    # is_unmatched is reserved: it is auto-appended to merged artifacts only
+    # and is not referenceable from output.columns.
+    def _check_reserved_columns(output_block: dict, label: str) -> None:
+        for key, entries in (output_block.get("columns") or {}).items():
+            for i, entry in enumerate(entries or []):
+                if not isinstance(entry, dict):
+                    continue
+                names = [entry.get("field")] + list(entry.get("fields", []) or [])
+                where = "field" if "is_unmatched" in names else None
+                if entry.get("header") == "is_unmatched":
+                    where = where or "header"
+                if where:
+                    critical.append(
+                        f'{label}.columns.{key}[{i}]: "is_unmatched" is a reserved '
+                        f"column name and cannot be used as a {where}. It is "
+                        "auto-appended as the final column of merged artifacts "
+                        "only. Rename it."
+                    )
+
+    if "output" in recipe:
+        _check_reserved_columns(recipe["output"], "output")
+    for phase in recipe.get("phases", []):
+        if "output" in phase:
+            _check_reserved_columns(phase["output"], phase.get("name", "phase"))
 
     # final_rollup: single-phase terminal aggregation pass (Issue #67)
     phase_rollups = [
@@ -675,31 +724,12 @@ def validate_fields(
     for pop_data in populations.values():
         if pop_data["df"] is not None:
             all_source_cols.update(pop_data["df"].columns)
-    # Known derived/metadata columns the pipeline creates
-    # Static metadata columns always present in output
-    known_derived = {
-        "match_step", "match_tier", "name_score",
-        "addr_score", "addr_street_match", "addr_comparison", "addr_tier",
-        "reason_code", "rejection_step", "best_rejected_score",
-    }
-    # Dynamically add columns from recipe inherit[].as values
-    all_recipe_steps = list(recipe.get("steps", []))
-    if not all_recipe_steps and "phases" in recipe:
-        for phase in recipe["phases"]:
-            all_recipe_steps.extend(phase.get("steps", []))
-    for step in all_recipe_steps:
-        for inh in step.get("inherit", []):
-            if "as" in inh:
-                known_derived.add(inh["as"])
+    # Known derived/metadata columns the pipeline creates (static metadata +
+    # inherit[].as names + final_rollup write_to/_changed flags).
+    known_derived = known_derived_columns(recipe)
     # Columns that exist before the rollup runs (source + static + inherited);
     # write_to must not collide with any of these (checked below).
-    preexisting_cols = all_source_cols | known_derived
-    # final_rollup adds a write_to column plus its <write_to>_changed flag
-    for bucket in recipe.get("output", {}).get("final_rollup", []) or []:
-        if isinstance(bucket, dict):
-            write_to = bucket.get("write_to", "rolled_supplier_id")
-            known_derived.add(write_to)
-            known_derived.add(f"{write_to}_changed")
+    preexisting_cols = all_source_cols | known_derived_columns(recipe, include_rollup=False)
 
     for tab_key in ("matched", "analysis"):
         for i, entry in enumerate(output_columns.get(tab_key, [])):
@@ -900,6 +930,64 @@ def format_validation_summary(
         lines.append("\n❌ Critical errors found. Pipeline will not run.")
 
     return "\n".join(lines)
+
+
+def normalize_formats(output_cfg: dict, default: str = "xlsx") -> list[str]:
+    """Resolve output.format into an ordered, deduped list of format strings."""
+    raw = output_cfg.get("format", default)
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        seen: list[str] = []
+        for f in raw:
+            if f not in seen:
+                seen.append(f)
+        return seen
+    return [default]
+
+
+def resolve_matched_unmatched(output_cfg: dict) -> list[str] | None:
+    """Resolve output.matched_unmatched into a list of view modes, None if absent."""
+    raw = output_cfg.get("matched_unmatched")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        seen: list[str] = []
+        for m in raw:
+            if m not in seen:
+                seen.append(m)
+        return seen
+    return None
+
+
+# Static metadata columns the pipeline always creates in matched output.
+_STATIC_DERIVED_COLUMNS = {
+    "match_step", "match_tier", "name_score",
+    "addr_score", "addr_street_match", "addr_comparison", "addr_tier",
+    "reason_code", "rejection_step", "best_rejected_score",
+}
+
+
+def known_derived_columns(recipe: dict, include_rollup: bool = True) -> set[str]:
+    """Return the set of derived/metadata columns the pipeline may create."""
+    known = set(_STATIC_DERIVED_COLUMNS)
+    steps = list(recipe.get("steps", []))
+    if not steps and "phases" in recipe:
+        for phase in recipe["phases"]:
+            steps.extend(phase.get("steps", []))
+    for step in steps:
+        for inh in step.get("inherit", []):
+            if "as" in inh:
+                known.add(inh["as"])
+    if include_rollup:
+        for bucket in recipe.get("output", {}).get("final_rollup", []) or []:
+            if isinstance(bucket, dict):
+                write_to = bucket.get("write_to", "rolled_supplier_id")
+                known.add(write_to)
+                known.add(f"{write_to}_changed")
+    return known
 
 
 def resolve_summary_modes(output_cfg: dict) -> list[str]:

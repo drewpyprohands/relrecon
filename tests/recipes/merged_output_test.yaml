@@ -1,0 +1,51 @@
+name: Merged Output Test
+description: >
+  Minimal exact-match recipe for the merged matched/unmatched output view
+  (Issue #81). V001/V002 exact-match dest; V003 is unmatched. Headers equal
+  field names so the merged csv is asserted byte-for-byte.
+
+sources:
+  src:
+    file: mu_source.csv
+  dst:
+    file: mu_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw, clean]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+
+output:
+  format: [csv, parquet]
+  matched_unmatched: [merged, separate]
+  summary: [md]
+  match_mode: best_match
+  columns:
+    matched:
+      - field: vnd_id
+        header: vnd_id
+      - field: l3_fmly_nm
+        header: l3_fmly_nm
+      - field: match_step
+        header: match_step
+      - field: derived_l1_id
+        header: derived_l1_id
+    analysis:
+      - field: vnd_id
+        header: vnd_id
+      - field: l3_fmly_nm
+        header: l3_fmly_nm
