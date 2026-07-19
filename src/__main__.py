@@ -180,14 +180,16 @@ def _write_output(
         emit_companion = emit_separate
 
     base = output_path.rsplit(".", 1)[0]
+    format_is_list = isinstance(output_cfg.get("format"), list)
 
-    for idx, fmt in enumerate(formats):
+    for fmt in formats:
         ext = fmt if fmt in ("csv", "parquet") else "xlsx"
-        # The first format writes to output_path verbatim -- no extension
-        # re-derivation (matches main: `--output data` writes `data`;
-        # `--output data.csv` with format parquet writes `data.csv`).
-        # Additional formats in a list derive a sibling path from the base.
-        fmt_path = output_path if idx == 0 else f"{base}.{ext}"
+        # A single-string `format` writes to output_path verbatim -- no
+        # extension re-derivation (matches main: `--output data` writes
+        # `data`; `--output data.csv` with format parquet writes `data.csv`).
+        # A list derives a distinct path per format, so two formats never
+        # collide on one path.
+        fmt_path = f"{base}.{ext}" if format_is_list else output_path
 
         if fmt == "xlsx" and "xlsx" in summary_modes:
             # Formatted xlsx report (Matched/Analysis/Summary). merged folds

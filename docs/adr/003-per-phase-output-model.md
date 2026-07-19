@@ -87,39 +87,6 @@ output:
 
 This is still per-phase output -- it uses that phase's match results, not data from other phases. The enrichment is a post-processing transform in the output layer (`enrich_join()` in `report.py`, `_build_enriched_output()` in `__main__.py`). The matching engine is unmodified.
 
-## Format List + Merged View (Extension)
-
-**Added:** 2026-07-19 (Issue #81)
-
-`output.format` accepts a list, so one run emits several formats (e.g.
-`format: [csv, parquet]`). A single string is unchanged.
-
-`output.matched_unmatched` selects which matched/unmatched view(s) to emit
-(single value or list):
-
-```yaml
-output:
-  format: [csv, parquet]
-  matched_unmatched: [merged, separate]
-```
-
-- **Key absent** -- legacy behavior exactly: separate matched artifact, plus
-  an unmatched companion iff `emit_unmatched`. Merged requires explicit config.
-- **`separate`** -- today's matched + unmatched artifacts (unchanged names).
-- **`merged`** -- matched table with unmatched source rows appended, written as
-  `{basename}_merged.{ext}` (csv/parquet) or folded into the xlsx report's
-  Matched tab. Columns follow `output.columns.matched`; unmatched rows carry
-  `match_step = unmatched` and empty values in derived columns. A final boolean
-  `is_unmatched` column flags the origin. Merged is always emitted when
-  configured, including with zero unmatched rows.
-
-`is_unmatched` exists **only** in merged artifacts and is deliberately NOT
-registered in `known_derived` -- it is not referenceable from `output.columns`.
-The matching engine is unmodified; merged is a presentation-layer concat
-(`build_merged_frame()` in `report.py`). Single-phase only. `emit_unmatched` is
-deprecated: when `matched_unmatched` is present it is ignored (with a warning)
-and `matched_unmatched` wins. `unmatched` is a reserved step name.
-
 ## Consequences
 
 - Single-phase recipes work identically to before (backward compatible)

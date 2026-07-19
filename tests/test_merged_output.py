@@ -243,6 +243,17 @@ def test_output_path_extension_not_rederived(tmp_path):
     assert pl.read_parquet(tmp_path / "data.csv").height == 2
 
 
+def test_format_list_does_not_collide_on_output_path(tmp_path):
+    """A list derives a path per format, so no format overwrites another."""
+    recipe = load_recipe(RECIPE)
+    recipe["output"]["format"] = ["parquet", "csv"]
+    del recipe["output"]["matched_unmatched"]
+    recipe["output"]["summary"] = "none"
+    _run(recipe, tmp_path, out_name="data.csv")
+    assert pl.read_parquet(tmp_path / "data.parquet").height == 2
+    assert pl.read_csv(tmp_path / "data.csv").height == 2
+
+
 # ---------------------------------------------------------------------------
 # Validation rules
 # ---------------------------------------------------------------------------
