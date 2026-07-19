@@ -1,10 +1,4 @@
-"""Tests for the merged matched/unmatched output view + format list (Issue #81).
-
-Covers build_merged_frame (report.py), the _write_output orchestration
-(format list, matched_unmatched modes), the is_unmatched column, and the
-new validation rules (reserved step name, multi-phase rejection,
-emit_unmatched deprecation/precedence).
-"""
+"""Tests for the merged matched/unmatched output view + format list (Issue #81)."""
 
 import importlib.util
 import sys
@@ -55,12 +49,7 @@ def _run(recipe: dict, tmp_path, out_name="data.csv"):
 # ---------------------------------------------------------------------------
 
 def test_merged_csv_exact(tmp_path):
-    """Merged csv matches the spec exactly, with the matched block first.
-
-    Asserts header + column order exactly, the row multiset exactly, and
-    that every is_unmatched=false row precedes every is_unmatched=true row.
-    Row order WITHIN each block is pipeline-defined and not asserted.
-    """
+    """Merged csv matches the spec exactly, with the matched block first."""
     _run(load_recipe(RECIPE), tmp_path)
     lines = (tmp_path / "data_merged.csv").read_text().splitlines()
 
@@ -159,9 +148,7 @@ def test_merged_only_ignores_emit_unmatched(tmp_path):
 
 
 def test_all_unmatched_xlsx(tmp_path):
-    """All-unmatched xlsx: matched frame is empty (0,0) -- merged must still
-    write every unmatched row into the Matched tab (regression: the width>0
-    guard silently emitted zero rows)."""
+    """All-unmatched xlsx: every unmatched row still lands in the Matched tab."""
     from openpyxl import load_workbook
 
     recipe = load_recipe(RECIPE)

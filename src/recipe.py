@@ -933,11 +933,7 @@ def format_validation_summary(
 
 
 def normalize_formats(output_cfg: dict, default: str = "xlsx") -> list[str]:
-    """Resolve output.format into an ordered list of format strings.
-
-    Accepts a single string (legacy) or a list. Order and dedup follow the
-    recipe; a bare string yields a one-element list.
-    """
+    """Resolve output.format into an ordered, deduped list of format strings."""
     raw = output_cfg.get("format", default)
     if isinstance(raw, str):
         return [raw]
@@ -951,12 +947,7 @@ def normalize_formats(output_cfg: dict, default: str = "xlsx") -> list[str]:
 
 
 def resolve_matched_unmatched(output_cfg: dict) -> list[str] | None:
-    """Resolve output.matched_unmatched into a list of view modes.
-
-    Returns None when the key is ABSENT (legacy behavior -- separate
-    artifacts honoring emit_unmatched). Otherwise a list subset of
-    ['merged', 'separate']. A bare string yields a one-element list.
-    """
+    """Resolve output.matched_unmatched into a list of view modes, None if absent."""
     raw = output_cfg.get("matched_unmatched")
     if raw is None:
         return None
@@ -980,14 +971,7 @@ _STATIC_DERIVED_COLUMNS = {
 
 
 def known_derived_columns(recipe: dict, include_rollup: bool = True) -> set[str]:
-    """Return the set of derived/metadata columns the pipeline may create.
-
-    Static metadata columns plus recipe-declared inherit[].as names, plus
-    (when ``include_rollup``) final_rollup write_to columns and their
-    _changed flags. Pass ``include_rollup=False`` for the set of columns that
-    exist *before* the rollup runs. Note: the merged-view is_unmatched column
-    is deliberately NOT registered here -- it exists only in merged artifacts.
-    """
+    """Return the set of derived/metadata columns the pipeline may create."""
     known = set(_STATIC_DERIVED_COLUMNS)
     steps = list(recipe.get("steps", []))
     if not steps and "phases" in recipe:

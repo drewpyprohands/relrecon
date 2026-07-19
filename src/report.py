@@ -498,14 +498,7 @@ def write_unmatched_export(unmatched_df, output_cfg: dict, path: str, fmt: str):
 
 def _resolve_merged_columns(matched_df, unmatched_df, output_cfg: dict,
                             derived: set | None = None) -> list:
-    """Ordered (field, header) list for the merged raw export.
-
-    Follows ``output.columns.matched`` when present, keeping any entry whose
-    field resolves in the matched/unmatched frames, is the ``match_step``
-    sentinel, or is a known derived column (so derived columns still appear
-    in an all-unmatched run where the matched frame is empty). Falls back to
-    the matched frame's own columns when no mapping is configured.
-    """
+    """Ordered (field, header) list for the merged raw export."""
     derived = derived or set()
     col_defs = (output_cfg.get("columns") or {}).get("matched")
     if not col_defs:
@@ -535,17 +528,7 @@ def _resolve_merged_columns(matched_df, unmatched_df, output_cfg: dict,
 
 def build_merged_frame(matched_df, unmatched_df, output_cfg: dict,
                        derived: set | None = None, columns: list | None = None):
-    """Matched rows + unmatched source rows as one presentation frame.
-
-    Columns follow output.columns.matched (renamed to headers), or an
-    explicit ``columns`` list of (field, header) pairs when the caller has
-    already resolved them. Unmatched rows carry the match_step sentinel
-    'unmatched' and empty values in the columns they lack. A final boolean
-    is_unmatched column flags the origin (false for matched rows, true for
-    unmatched). is_unmatched lives only in the merged frame -- it is not a
-    registered derived column. Emitted even when there are zero unmatched
-    rows, and when the matched frame is empty (all-unmatched runs).
-    """
+    """Matched rows + unmatched source rows as one presentation frame."""
     cols = columns or _resolve_merged_columns(
         matched_df, unmatched_df, output_cfg, derived
     )

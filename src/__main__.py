@@ -138,15 +138,7 @@ def _write_output(
     mermaid_mode: str = "default",
     timing: dict | None = None,
 ):
-    """Write output files for a single-phase recipe (backward compatible).
-
-    Emits every configured ``format`` (single string or list). For each raw
-    data format, ``matched_unmatched`` selects the views: ``separate`` writes
-    today's matched + unmatched artifacts, ``merged`` writes a
-    ``{base}_merged.{ext}`` file. When the key is absent, behavior is the
-    legacy path (matched artifact, plus an unmatched companion iff
-    ``emit_unmatched``). xlsx report output folds merged into the Matched tab.
-    """
+    """Write output files for a single-phase recipe (backward compatible)."""
     import time
 
     from recipe import (
