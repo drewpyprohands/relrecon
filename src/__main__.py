@@ -181,9 +181,13 @@ def _write_output(
 
     base = output_path.rsplit(".", 1)[0]
 
-    for fmt in formats:
+    for idx, fmt in enumerate(formats):
         ext = fmt if fmt in ("csv", "parquet") else "xlsx"
-        fmt_path = f"{base}.{ext}"
+        # The first format writes to output_path verbatim -- no extension
+        # re-derivation (matches main: `--output data` writes `data`;
+        # `--output data.csv` with format parquet writes `data.csv`).
+        # Additional formats in a list derive a sibling path from the base.
+        fmt_path = output_path if idx == 0 else f"{base}.{ext}"
 
         if fmt == "xlsx" and "xlsx" in summary_modes:
             # Formatted xlsx report (Matched/Analysis/Summary). merged folds

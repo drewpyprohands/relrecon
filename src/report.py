@@ -250,30 +250,12 @@ def _build_columns_from_recipe(recipe_columns: list, df: pl.DataFrame) -> list:
     return resolved
 
 
-def _merged_tab_frame(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame,
-                      main_cols: list) -> pl.DataFrame:
-    """Build the merged Matched-tab frame: matched rows then unmatched rows.
-
-    Columns follow the resolved ``main_cols`` (matched layout). Unmatched
-    rows carry the ``match_step`` sentinel ``unmatched`` and empty values in
-    columns they lack, plus a final ``is_unmatched`` boolean flag.
-    """
-    names = [c for c, _ in main_cols]
-    matched_side = matched_df.select(names).with_columns(
-        pl.lit(False).alias("is_unmatched")
-    )
-    u_exprs = []
-    for col_name in names:
-        if col_name == "match_step":
-            u_exprs.append(pl.lit("unmatched").alias(col_name))
-        elif col_name in unmatched_df.columns:
-            u_exprs.append(pl.col(col_name).alias(col_name))
-        else:
-            u_exprs.append(pl.lit(None).alias(col_name))
-    unmatched_side = unmatched_df.select(u_exprs).with_columns(
-        pl.lit(True).alias("is_unmatched")
-    )
-    return pl.concat([matched_side, unmatched_side], how="vertical_relaxed")
+def _known_derived(recipe: Optional[dict]) -> set:
+    """Derived/metadata column names the recipe may produce (empty if none)."""
+    if not recipe:
+        return set()
+    from recipe import known_derived_columns
+    return known_derived_columns(recipe)
 
 
 def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None = None,
@@ -318,7 +300,7 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
     ws_main.title = "Matched"
 
     merged_active = merged and unmatched_df is not None
-    if matched_df.height > 0 or (merged_active and matched_df.width > 0):
+    if matched_df.height > 0 or merged_active:
         if recipe_columns and "matched" in recipe_columns:
             # Recipe-driven columns
             matched_df = _coalesce_variant_columns(matched_df, recipe_columns["matched"])
@@ -329,8 +311,16 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
             main_cols = _resolve_columns(matched_df, MAIN_REPORT_COLUMNS + DEST_COLUMNS)
 
         if merged_active:
-            write_df = _merged_tab_frame(matched_df, unmatched_df, main_cols)
-            main_cols = main_cols + [("is_unmatched", "is_unmatched")]
+            # Resolve columns against both frames so an empty matched frame
+            # (all-unmatched run) still yields the full merged layout. Falls
+            # back to the hardcoded columns when the recipe defines none.
+            output_cfg = (recipe or {}).get("output", {})
+            derived = _known_derived(recipe)
+            merged_cols = None if (recipe_columns and "matched" in recipe_columns) else main_cols
+            write_df = build_merged_frame(
+                matched_df, unmatched_df, output_cfg, derived, columns=merged_cols,
+            )
+            main_cols = [(c, c) for c in write_df.columns]
         else:
             write_df = matched_df
 
@@ -544,17 +534,21 @@ def _resolve_merged_columns(matched_df, unmatched_df, output_cfg: dict,
 
 
 def build_merged_frame(matched_df, unmatched_df, output_cfg: dict,
-                       derived: set | None = None):
+                       derived: set | None = None, columns: list | None = None):
     """Matched rows + unmatched source rows as one presentation frame.
 
-    Columns follow output.columns.matched (renamed to headers). Unmatched
-    rows carry the match_step sentinel 'unmatched' and empty values in the
-    columns they lack. A final boolean is_unmatched column flags the origin
-    (false for matched rows, true for unmatched). is_unmatched lives only in
-    the merged frame -- it is not a registered derived column. Emitted even
-    when there are zero unmatched rows.
+    Columns follow output.columns.matched (renamed to headers), or an
+    explicit ``columns`` list of (field, header) pairs when the caller has
+    already resolved them. Unmatched rows carry the match_step sentinel
+    'unmatched' and empty values in the columns they lack. A final boolean
+    is_unmatched column flags the origin (false for matched rows, true for
+    unmatched). is_unmatched lives only in the merged frame -- it is not a
+    registered derived column. Emitted even when there are zero unmatched
+    rows, and when the matched frame is empty (all-unmatched runs).
     """
-    cols = _resolve_merged_columns(matched_df, unmatched_df, output_cfg, derived)
+    cols = columns or _resolve_merged_columns(
+        matched_df, unmatched_df, output_cfg, derived
+    )
 
     def _side(df, is_unmatched: bool):
         exprs = []

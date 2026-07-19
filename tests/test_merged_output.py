@@ -55,19 +55,38 @@ def _run(recipe: dict, tmp_path, out_name="data.csv"):
 # ---------------------------------------------------------------------------
 
 def test_merged_csv_exact(tmp_path):
-    """Merged csv matches the spec: header, column order, sentinel, flag.
+    """Merged csv matches the spec exactly, with the matched block first.
 
-    Matched rows precede unmatched rows; matched row order is pipeline-
-    defined (non-deterministic), so rows are compared as a set.
+    Asserts header + column order exactly, the row multiset exactly, and
+    that every is_unmatched=false row precedes every is_unmatched=true row.
+    Row order WITHIN each block is pipeline-defined and not asserted.
     """
     _run(load_recipe(RECIPE), tmp_path)
     lines = (tmp_path / "data_merged.csv").read_text().splitlines()
+
+    # Header row and column order, exact
     assert lines[0] == MERGED_HEADER
-    assert sorted(lines[1:]) == sorted([
+
+    rows = lines[1:]
+    # Row multiset, exact values
+    assert sorted(rows) == sorted([
         "V001,Helios Energy,Exact L3,P3100,false",
         "V002,Alpine,Exact L3,P5100,false",
         "V003,Sheyelles,unmatched,,true",
     ])
+
+    # Block order: all matched rows precede all unmatched rows
+    flags = [r.rsplit(",", 1)[1] for r in rows]
+    assert flags == sorted(flags, key=lambda f: f == "true"), (
+        f"is_unmatched=false rows must all precede true rows, got {flags}"
+    )
+    assert flags.count("false") == 2 and flags.count("true") == 1
+
+
+def test_merged_block_order_detects_violation():
+    """The block-order assertion actually rejects an interleaved frame."""
+    flags = ["false", "true", "false"]
+    assert flags != sorted(flags, key=lambda f: f == "true")
 
 
 def test_emits_separate_and_merged_both_formats(tmp_path):
@@ -139,6 +158,30 @@ def test_merged_only_ignores_emit_unmatched(tmp_path):
     assert not (tmp_path / "data_unmatched.csv").exists()
 
 
+def test_all_unmatched_xlsx(tmp_path):
+    """All-unmatched xlsx: matched frame is empty (0,0) -- merged must still
+    write every unmatched row into the Matched tab (regression: the width>0
+    guard silently emitted zero rows)."""
+    from openpyxl import load_workbook
+
+    recipe = load_recipe(RECIPE)
+    recipe["sources"]["dst"]["file"] = "mu_dest_empty.csv"
+    recipe["output"]["format"] = "xlsx"
+    recipe["output"]["summary"] = ["xlsx"]
+    recipe["output"]["matched_unmatched"] = "merged"
+    _run(recipe, tmp_path, out_name="data.xlsx")
+
+    ws = load_workbook(tmp_path / "data.xlsx")["Matched"]
+    rows = [[c.value for c in row] for row in ws.iter_rows()]
+    assert rows[0] == MERGED_HEADER.split(",")  # merged columns intact
+    data = rows[1:]
+    assert len(data) == 3                                    # all rows present
+    assert [r[-1] for r in data] == [True, True, True]        # is_unmatched
+    assert [r[2] for r in data] == ["unmatched"] * 3          # match_step
+    assert [r[3] for r in data] == [None, None, None]         # derived empty
+    assert sorted(r[0] for r in data) == ["V001", "V002", "V003"]
+
+
 def test_xlsx_merged_appends_into_match_tab(tmp_path):
     """xlsx merged: unmatched rows land in the (unrenamed) Matched tab."""
     from openpyxl import load_workbook
@@ -176,6 +219,30 @@ def test_noop_single_format_no_matched_unmatched(tmp_path):
     assert not (tmp_path / "data_unmatched.csv").exists()
 
 
+def test_output_path_verbatim_no_extension(tmp_path):
+    """`--output data` (no extension) writes a file literally named `data`."""
+    recipe = load_recipe(RECIPE)
+    recipe["output"]["format"] = "csv"
+    del recipe["output"]["matched_unmatched"]
+    recipe["output"]["summary"] = "none"
+    _run(recipe, tmp_path, out_name="data")
+    assert (tmp_path / "data").is_file()
+    assert not (tmp_path / "data.csv").exists()
+
+
+def test_output_path_extension_not_rederived(tmp_path):
+    """`--output data.csv` with format: parquet writes `data.csv` (main-exact)."""
+    recipe = load_recipe(RECIPE)
+    recipe["output"]["format"] = "parquet"
+    del recipe["output"]["matched_unmatched"]
+    recipe["output"]["summary"] = "none"
+    _run(recipe, tmp_path, out_name="data.csv")
+    assert (tmp_path / "data.csv").is_file()
+    assert not (tmp_path / "data.parquet").exists()
+    # Content is parquet despite the .csv name -- the format drives the writer
+    assert pl.read_parquet(tmp_path / "data.csv").height == 2
+
+
 # ---------------------------------------------------------------------------
 # Validation rules
 # ---------------------------------------------------------------------------
@@ -210,6 +277,36 @@ def test_emit_unmatched_alone_no_warning():
     recipe["output"]["emit_unmatched"] = True
     warnings = validate_recipe(recipe)
     assert not any("emit_unmatched" in w for w in warnings)
+
+
+def test_is_unmatched_reserved_as_field():
+    recipe = load_recipe(RECIPE)
+    recipe["output"]["columns"]["matched"][0]["field"] = "is_unmatched"
+    with pytest.raises(ValueError, match="is_unmatched.*reserved"):
+        validate_recipe(recipe)
+
+
+def test_is_unmatched_reserved_as_header():
+    recipe = load_recipe(RECIPE)
+    recipe["output"]["columns"]["matched"][0]["header"] = "is_unmatched"
+    with pytest.raises(ValueError, match="is_unmatched.*reserved"):
+        validate_recipe(recipe)
+
+
+def test_is_unmatched_reserved_in_analysis_columns():
+    recipe = load_recipe(RECIPE)
+    recipe["output"]["columns"]["analysis"][0]["header"] = "is_unmatched"
+    with pytest.raises(ValueError, match="is_unmatched.*reserved"):
+        validate_recipe(recipe)
+
+
+def test_is_unmatched_allowed_elsewhere():
+    """Negative control: the reserved check is scoped to output.columns."""
+    recipe = load_recipe(RECIPE)  # no is_unmatched anywhere
+    assert validate_recipe(recipe) is not None  # validates without raising
+    # A similarly-named column is not caught by the reserved check
+    recipe["output"]["columns"]["matched"][0]["header"] = "is_unmatched_flag"
+    validate_recipe(recipe)
 
 
 def test_schema_accepts_format_list_and_matched_unmatched():

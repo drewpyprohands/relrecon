@@ -313,6 +313,31 @@ def validate_recipe(recipe: dict) -> list[str]:
     if "output" in recipe and "format" not in recipe["output"]:
         critical.append("Output missing 'format' field")
 
+    # is_unmatched is reserved: it is auto-appended to merged artifacts only
+    # and is not referenceable from output.columns.
+    def _check_reserved_columns(output_block: dict, label: str) -> None:
+        for key, entries in (output_block.get("columns") or {}).items():
+            for i, entry in enumerate(entries or []):
+                if not isinstance(entry, dict):
+                    continue
+                names = [entry.get("field")] + list(entry.get("fields", []) or [])
+                where = "field" if "is_unmatched" in names else None
+                if entry.get("header") == "is_unmatched":
+                    where = where or "header"
+                if where:
+                    critical.append(
+                        f'{label}.columns.{key}[{i}]: "is_unmatched" is a reserved '
+                        f"column name and cannot be used as a {where}. It is "
+                        "auto-appended as the final column of merged artifacts "
+                        "only. Rename it."
+                    )
+
+    if "output" in recipe:
+        _check_reserved_columns(recipe["output"], "output")
+    for phase in recipe.get("phases", []):
+        if "output" in phase:
+            _check_reserved_columns(phase["output"], phase.get("name", "phase"))
+
     # final_rollup: single-phase terminal aggregation pass (Issue #67)
     phase_rollups = [
         p.get("output", {}).get("final_rollup")
