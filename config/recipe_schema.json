@@ -698,6 +698,74 @@
           },
           "description": "Tie-breaker for selecting among duplicate destination matches."
         },
+        "decision_record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidates"
+          ],
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Ordered candidate columns (2+). Null = polars null or empty/whitespace-only string."
+            },
+            "write_to": {
+              "type": "string",
+              "description": "Name of the decided column. Also emits <write_to>_src, the field name of the winning candidate."
+            },
+            "select": {
+              "type": "string",
+              "enum": [
+                "first",
+                "min",
+                "max"
+              ],
+              "default": "first",
+              "description": "Winner among populated candidates: 'first' (list order), or 'min'/'max' by parsed integer value. Ties and unparseable values fall back to list order."
+            },
+            "strip_prefix": {
+              "type": "string",
+              "default": "alpha",
+              "description": "Prefix removed before min/max parsing: 'alpha' (leading letters, default), an anchored regex, or 'none'. Same semantics as tie_breaker.strip_prefix."
+            }
+          },
+          "description": "Presentation-layer decision over candidate columns (single-phase only). Emits <write_to> and <write_to>_src. Columns appear in an artifact only when listed in output.columns.matched."
+        },
+        "compare_columns": {
+          "type": "array",
+          "description": "Presentation-layer comparisons (single-phase only). Each entry emits a column of literal 'higher'/'lower'/'same', left-relative. Both sides parse as integers -> numeric compare, otherwise lexicographic on the stripped strings. Any null operand yields an empty cell. Never aborts on data values. Columns appear in an artifact only when listed in output.columns.matched.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "left",
+              "right",
+              "output"
+            ],
+            "properties": {
+              "left": {
+                "type": "string",
+                "description": "Left-hand column. 'higher' means left > right."
+              },
+              "right": {
+                "type": "string",
+                "description": "Right-hand column."
+              },
+              "output": {
+                "type": "string",
+                "description": "Name of the emitted observation column."
+              },
+              "strip_prefix": {
+                "type": "string",
+                "default": "alpha",
+                "description": "Prefix removed from both sides before parsing: 'alpha' (leading letters, default), an anchored regex, or 'none'. Same semantics as tie_breaker.strip_prefix."
+              }
+            }
+          }
+        },
         "final_rollup": {
           "type": "array",
           "description": "Terminal, non-destructive rollup pass (single-phase only). Each bucket rolls a group to the tie-broken min of a target column across the given steps, writing an additive column plus a <write_to>_changed audit flag. Distinct from per-step tie_breaker, which resolves ties within one step.",

@@ -1,0 +1,8 @@
+vnd_id,match_step,final_l1_id,final_l1_id_src,revenue_cmp,revenue_cmp_inv,l1_cmp_alpha,l1_cmp_none,is_unmatched
+V001,Exact L3,P3100,derived_l1_id,higher,lower,lower,higher,false
+V002,Exact L3,S1002,src_l1_id,same,same,,,false
+V003,Exact L3,,,,,,,false
+V005,Exact L3,P4100,derived_l1_id,lower,higher,lower,higher,false
+V006,Exact L3,P4200,derived_l1_id,same,same,lower,higher,false
+V007,Exact L3,P4300,derived_l1_id,higher,lower,lower,higher,false
+V004,unmatched,S1004,src_l1_id,,,,,true

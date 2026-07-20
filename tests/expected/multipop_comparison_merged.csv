@@ -1,0 +1,37 @@
+Source L3 ID,Source L3 Name,Source Parent ID,Source Parent Name,Destination L3 ID,Destination L3 Name,Destination L1 ID,Destination L1 Name,Derived L1 Higher/Lower,Rolled L1 ID,Rolled L1 Higher/Lower,Decided Parent ID,Decided Parent Src,is_unmatched
+vnd2983,Key Lawmakers,102393,Law Eagles,vnd3923,Key law companies,00192,Law Eagles Inc,lower,102393,same,00192,derived_l1_id,false
+vnd0289,Eyes Marketplace,08242,Eyeballs Corp,vnd0239,E Y marketplace,00021,eagle youth inc,lower,08242,same,00021,derived_l1_id,false
+vnd0239,E Y marketplace,00021,eagle youth inc,vnd88449,Fried Corndogs Incorporated,00021,eagle youth inc,same,00021,same,00021,rolled_l1_id,false
+vnd3923,Key law companies,00192,Law Eagles Inc,vnd2983,Key Lawmakers,102393,Law Eagles,higher,00192,same,00192,rolled_l1_id,false
+vnd7113,EYS EQUIPO Y SOLUCIONES SC,01929,Equipo Y Soluciones SC,vnd4233,los eys equipo soluciones,0012,los equipo y soluciones.,lower,01929,same,0012,derived_l1_id,false
+vnd9211,eys equiport,00012,lintech solutions,vnd88102,equiport technologies,88102,lintech solutions,higher,00012,same,00012,rolled_l1_id,false
+vnd4233,los eys equipo soluciones,0012,los equipo y soluciones.,vnd7113,EYS EQUIPO Y SOLUCIONES SC,01929,Equipo Y Soluciones SC,higher,0012,same,0012,rolled_l1_id,false
+vnd88102,equiport technologies,88102,lintech solutions,vnd9211,eys equiport,00012,lintech solutions,lower,88102,same,00012,derived_l1_id,false
+vnd88449,Fried Corndogs Incorporated,00021,eagle youth inc,vnd0239,E Y marketplace,00021,eagle youth inc,same,00021,same,00021,rolled_l1_id,false
+vnd77001,Meridian Logistics,55010,Meridian Holdings,vnd77002,Meridian Logistics,55003,Meridian Group LLC,lower,55003,lower,55003,rolled_l1_id,false
+vnd77002,Meridian Logistics,55003,Meridian Group LLC,vnd77001,Meridian Logistics,55010,Meridian Holdings,higher,55003,same,55003,rolled_l1_id,false
+vnd77003,Meridian Logistics,55201,Meridian Parent Co,vnd77001,Meridian Logistics,55010,Meridian Holdings,lower,55003,lower,55003,rolled_l1_id,false
+vnd77010,meridian logistics corp,55444,Meridian Overseas,vnd77001,Meridian Logistics,55010,Meridian Holdings,lower,55444,same,55010,derived_l1_id,false
+vnd66001,Cobalt Partners,44100,Cobalt Parent A,vnd66002,Cobalt Partners,44100,Cobalt Parent B,same,44100,same,44100,rolled_l1_id,false
+vnd66002,Cobalt Partners,44100,Cobalt Parent B,vnd66001,Cobalt Partners,44100,Cobalt Parent A,same,44100,same,44100,rolled_l1_id,false
+vnd55001,Tundra Freight,33005,Tundra Holdings,vnd55002,tundra freight,33900,Tundra Group,higher,33005,same,33005,rolled_l1_id,false
+vnd55002,tundra freight,33900,Tundra Group,vnd55001,Tundra Freight,33005,Tundra Holdings,lower,33900,same,33005,derived_l1_id,false
+vnd5001,Quartz Milling,700,Quartz Parent Co,vnd5002,Quartz Milling,100,Quartz Group LLC,lower,100,lower,100,rolled_l1_id,false
+vnd5002,Quartz Milling,100,Quartz Group LLC,vnd5001,Quartz Milling,700,Quartz Parent Co,higher,100,same,100,rolled_l1_id,false
+vnd6001,Basalt Works,900,Basalt Parent Hi,vnd6003,Basalt Works,500,Basalt Parent Mid,lower,100,lower,100,rolled_l1_id,false
+vnd6003,Basalt Works,500,Basalt Parent Mid,vnd6001,Basalt Works,900,Basalt Parent Hi,higher,100,lower,100,rolled_l1_id,false
+vnd6004,Basalt Works,100,Basalt Parent Lo,vnd6001,Basalt Works,900,Basalt Parent Hi,higher,100,same,100,rolled_l1_id,false
+vnd7001,Onyx Terminal Services,800,Onyx Holdings,vnd7002,onyx terminal services llc,30,Onyx Group Intl,lower,800,same,30,derived_l1_id,false
+vnd7002,onyx terminal services llc,30,Onyx Group Intl,vnd7001,Onyx Terminal Services,800,Onyx Holdings,higher,30,same,30,rolled_l1_id,false
+vnd1234,hyatt,100049,hyatt enterprises,,,,,,,,,,true
+vnd3983,hyatt enterprises,100059,hyatt,,,,,,,,,,true
+vnd9238,Grand Hyatt,342433,HI Holdings Zurich,,,,,,,,,,true
+vnd2364,whyattelsburg inc.,9999,family corporation,,,,,,,,,,true
+vnd2345,Ernst & Young,01928,ERNST & YOUNG LLP,,,,,,,,,,true
+vnd2393,ey law,01928,ERNST & Young Global Limited,,,,,,,,,,true
+vnd9028,Sheyelles,03894,Sheyelles Inc.,,,,,,,,,,true
+vnd9038,bernstein & gropple,00029,bernstein and gropple,,,,,,,,,,true
+vnd88112,hyatt hotel phoenix,88112,Blyatt Hotel Phoenix,,,,,,,,,,true
+vnd88054,applebaum corp,88001,applebaum corp,,,,,,,,,,true
+vnd88011,Keysons Lawmak and Ersy,88011,Keyson Lawmak and Ersy,,,,,,,,,,true
+vnd88091,Sheyelles marketplace,88449,Sheyelles Holdings LLP,,,,,,,,,,true

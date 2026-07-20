@@ -1,0 +1,119 @@
+name: Multipop Comparison Rollup 
+description: >
+  Develop the final columns, comparison and group testing
+
+sources:
+  src:
+    file: multipop_comparison_input.csv
+    type: multi_population
+
+populations:
+  mg_pop:
+    source: src
+    record_key: vnd_id
+
+
+step_defaults:
+  inherit:
+    - source: l1_fmly_nm
+      as: derived_l1_name
+    - source: l1_fmly_id
+      as: derived_l1_id
+    - source: l3_fmly_nm
+      as: derived_l3_name
+    - source: vnd_id
+      as: derived_l3_id
+
+steps:
+  - name: Exact L3 Name Match
+    source: mg_pop
+    destination: mg_pop
+    match_fields:
+      - source: l3_fmly_nm
+        destination: l3_fmly_nm
+        method: exact
+        tiers: [raw,clean,normalized]
+  - name: Exact L1 Name Match
+    source: mg_pop
+    destination: mg_pop
+    match_fields:
+      - source: l1_fmly_nm
+        destination: l1_fmly_nm
+        method: exact
+        tiers: [raw,clean,normalized]
+  - name: Fuzzy L3 Name Match
+    source: mg_pop
+    destination: mg_pop
+    match_fields:
+      - source: l3_fmly_nm
+        destination: l3_fmly_nm
+        method: fuzzy
+        threshold: 80
+        scorer: token_sort_ratio
+        tiers: [raw,clean,normalized]
+  - name: Fuzzy L1 Name Match
+    source: mg_pop
+    destination: mg_pop
+    match_fields:
+      - source: l1_fmly_nm
+        destination: l1_fmly_nm
+        method: fuzzy
+        threshold: 80
+        scorer: token_sort_ratio
+        tiers: [raw,clean,normalized]
+
+output:
+  format: csv
+  matched_unmatched: [merged]
+  match_mode: best_match
+  summary: xlsx
+  decision_record:
+    candidates: [rolled_l1_id, derived_l1_id]
+    select: min
+    write_to: final_l1_id
+  final_rollup:
+    - steps: [Exact L3 Name Match, Fuzzy L3 Name Match, Fuzzy L3 Name Match, Fuzzy L1 Name Match]
+      group_key: l3_fmly_nm
+      target: l1_fmly_id
+      strip_prefix: alpha
+      order: asc
+      write_to: rolled_l1_id
+  compare_columns:
+    - left: derived_l1_id
+      right: l1_fmly_id
+      output: derived_l1_compare
+    - left: rolled_l1_id
+      right: l1_fmly_id
+      output: rolled_l1_compare
+
+  columns:
+    matched:
+      - field: vnd_id
+        header: Source L3 ID
+      - field: l3_fmly_nm
+        header: Source L3 Name
+      - field: l1_fmly_id
+        header: Source Parent ID
+      - field: l1_fmly_nm
+        header: Source Parent Name
+
+      - field: derived_l3_id
+        header: Destination L3 ID
+      - field: derived_l3_name
+        header: Destination L3 Name
+      - field: derived_l1_id
+        header: Destination L1 ID
+      - field: derived_l1_name
+        header: Destination L1 Name
+
+      - field: derived_l1_compare
+        header: Derived L1 Higher/Lower
+
+      - field: rolled_l1_id
+        header: Rolled L1 ID
+      - field: rolled_l1_compare
+        header: Rolled L1 Higher/Lower
+      - field: final_l1_id
+        header: Decided Parent ID
+      - field: final_l1_id_src
+        header: Decided Parent Src

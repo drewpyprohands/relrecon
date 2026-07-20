@@ -151,6 +151,7 @@ def _write_output(
     )
     from report import (
         apply_column_mapping,
+        apply_output_computations,
         build_merged_frame,
         generate_report,
         sort_by_source_order,
@@ -163,6 +164,11 @@ def _write_output(
     # order -- a filter of the source frame -- so it is left untouched.
     if source_key:
         matched_df = sort_by_source_order(matched_df, source_df, source_key)
+
+    # Presentation-layer computed columns. Applied to both frames so the
+    # merged view inherits them with no merged-view code.
+    matched_df = apply_output_computations(matched_df, output_cfg)
+    unmatched_df = apply_output_computations(unmatched_df, output_cfg)
 
     summary_modes = resolve_summary_modes(output_cfg)
     formats = normalize_formats(output_cfg, default="xlsx")
