@@ -414,6 +414,36 @@ def run_and_report(recipe_path: str, base_dir: str = ".",
     return path
 
 
+def sort_by_source_order(df, source_df, key_field: str):
+    """Order rows by each key's first appearance in the source input.
+
+    Write-layer only: the matching engine may emit rows in completion order,
+    which is not stable run-to-run. Keys absent from the source keep their
+    incoming order at the end. Helper columns never reach an artifact.
+    """
+    if df is None or source_df is None or df.height == 0 or source_df.height == 0:
+        return df
+    if key_field not in df.columns or key_field not in source_df.columns:
+        return df
+
+    order_col, key_col = "_source_order", "_source_order_key"
+    while order_col in df.columns or key_col in df.columns:
+        order_col, key_col = order_col + "_", key_col + "_"
+
+    order = (
+        source_df.select(pl.col(key_field).cast(pl.String).alias(key_col))
+        .with_row_index(order_col)
+        .group_by(key_col)
+        .agg(pl.col(order_col).min())
+    )
+    return (
+        df.with_columns(pl.col(key_field).cast(pl.String).alias(key_col))
+        .join(order, on=key_col, how="left")
+        .sort(order_col, nulls_last=True, maintain_order=True)
+        .drop(order_col, key_col)
+    )
+
+
 def write_raw_data(df, path: str, fmt: str):
     """Write a DataFrame as raw data (csv, xlsx, or parquet)."""
     if fmt == "csv":
@@ -591,5 +621,8 @@ def enrich_join(source_df, matched_df, enrich_key: str):
     enrich_df = matched_df.select([enrich_key] + enrichment_cols)
     enrich_df = enrich_df.unique(subset=[enrich_key], keep="first")
 
-    enriched = source_df.join(enrich_df, on=enrich_key, how="left")
+    # maintain_order: enriched output is the source in its own input order.
+    enriched = source_df.join(
+        enrich_df, on=enrich_key, how="left", maintain_order="left"
+    )
     return enriched, matched_count
