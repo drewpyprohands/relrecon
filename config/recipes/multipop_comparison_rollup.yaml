@@ -70,6 +70,7 @@ output:
   decision_record:
     candidates: [rolled_l1_id, derived_l1_id]
     select: min
+    write_to: final_l1_id
   final_rollup:
     - steps: [Exact L3 Name Match, Fuzzy L3 Name Match, Fuzzy L3 Name Match, Fuzzy L1 Name Match]
       group_key: l3_fmly_nm
@@ -112,7 +113,7 @@ output:
         header: Rolled L1 ID
       - field: rolled_l1_compare
         header: Rolled L1 Higher/Lower
-      - field: final_parent_id
+      - field: final_l1_id
         header: Decided Parent ID
-      - field: final_parent_src
+      - field: final_l1_id_src
         header: Decided Parent Src
