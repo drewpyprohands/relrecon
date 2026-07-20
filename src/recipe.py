@@ -376,6 +376,99 @@ def validate_recipe(recipe: dict) -> list[str]:
         for c in cols:
             reserved[c] = i
 
+    # decision_record / compare_columns: presentation-layer output features
+    # (Issue #93). Both are global-output-only, like matched_unmatched.
+    if is_multi_phase:
+        blocks = [("output", recipe.get("output", {}) or {})]
+        for i, p in enumerate(recipe.get("phases", [])):
+            blocks.append((p.get("name", f"Phase {i + 1}"), p.get("output", {}) or {}))
+        for label, block in blocks:
+            for key in ("decision_record", "compare_columns"):
+                if key in block:
+                    critical.append(
+                        f"{label}: output.{key} is not supported in multi-phase "
+                        "recipes. It is a global presentation-layer pass; use a "
+                        "single-phase recipe."
+                    )
+
+    out_cfg = recipe.get("output", {}) or {}
+    decision_record = out_cfg.get("decision_record")
+    compare_entries = out_cfg.get("compare_columns") or []
+    compare_names = compare_output_names(out_cfg)
+    # Names no compare output may take. is_unmatched is the merged flag column,
+    # "unmatched" the merged match_step sentinel.
+    taken: dict[str, str] = {
+        "is_unmatched": "the reserved merged-view flag column",
+        "unmatched": "the reserved merged-view match_step sentinel",
+    }
+    for c in _STATIC_DERIVED_COLUMNS:
+        taken[c] = "a pipeline metadata column"
+    for c in DECISION_RECORD_COLUMNS:
+        taken[c] = "a reserved decision_record output column"
+    for step in all_steps:
+        for inh in step.get("inherit", []):
+            if "as" in inh:
+                taken[inh["as"]] = "a derived (inherit) column"
+    for bucket in rollup_buckets:
+        if isinstance(bucket, dict):
+            wt = bucket.get("write_to", "rolled_supplier_id")
+            taken[wt] = "a final_rollup output column"
+            taken[f"{wt}_changed"] = "a final_rollup audit column"
+
+    seen_compare: dict[str, int] = {}
+    for i, entry in enumerate(compare_entries):
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("output")
+        if not name:
+            continue
+        if name in taken:
+            critical.append(
+                f'output.compare_columns[{i}]: output "{name}" collides with '
+                f"{taken[name]}. Choose a different output name."
+            )
+        if name in seen_compare:
+            critical.append(
+                f'output.compare_columns: entries {seen_compare[name]} and {i} '
+                f'both emit column "{name}". Each output name must be unique.'
+            )
+        seen_compare[name] = i
+
+    if decision_record is not None:
+        candidates = decision_record.get("candidates") or []
+        if len(candidates) < 2:
+            critical.append(
+                f"output.decision_record.candidates needs at least 2 entries "
+                f"(got {len(candidates)}). A coalesce over one column is a "
+                "rename, not a decision."
+            )
+        for c in candidates:
+            if c in compare_names:
+                critical.append(
+                    f'output.decision_record: candidate "{c}" names a '
+                    "compare_columns output. Cross-feature references are not "
+                    "supported -- use a source or derived column."
+                )
+            if c in DECISION_RECORD_COLUMNS:
+                critical.append(
+                    f'output.decision_record: candidate "{c}" is a reserved '
+                    "decision_record output column and cannot be a candidate."
+                )
+
+    # The computed columns are matched-side only: they are evaluated against
+    # matched/merged rows, so naming them on the analysis side is meaningless.
+    computed = set(output_computed_columns(out_cfg))
+    for i, entry in enumerate((out_cfg.get("columns") or {}).get("analysis") or []):
+        if not isinstance(entry, dict):
+            continue
+        field = entry.get("field")
+        if field in computed:
+            critical.append(
+                f'output.columns.analysis[{i}]: "{field}" is a decision_record '
+                "or compare_columns output column. These are matched-view only "
+                "-- reference them from output.columns.matched instead."
+            )
+
     source_pops = {step["source"] for step in all_steps if "source" in step}
     dest_pops = {step["destination"] for step in all_steps if "destination" in step}
 
@@ -766,6 +859,41 @@ def validate_fields(
                             f"not found in source data"
                         )
 
+    # decision_record / compare_columns: data-aware half of the Issue #93
+    # rules. Name collisions against actual source columns and candidate
+    # existence can only be checked once the sources are loaded.
+    out_cfg = recipe.get("output", {}) or {}
+    for name in DECISION_RECORD_COLUMNS:
+        if out_cfg.get("decision_record") and name in all_source_cols:
+            errors.append(
+                f'output.decision_record: "{name}" is a reserved output column '
+                "but a source dataset already provides it. Rename the source "
+                "column."
+            )
+    for i, entry in enumerate(out_cfg.get("compare_columns") or []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("output") in all_source_cols:
+            errors.append(
+                f'output.compare_columns[{i}]: output "{entry["output"]}" '
+                "collides with an existing source column. Choose a different "
+                "output name."
+            )
+        for role in ("left", "right"):
+            col = entry.get(role)
+            if col and "_dst" not in col and col not in (all_source_cols | known_derived):
+                errors.append(
+                    f'output.compare_columns[{i}]: {role} "{col}" not found in '
+                    f"source data or known derived columns"
+                )
+
+    for c in (out_cfg.get("decision_record") or {}).get("candidates") or []:
+        if "_dst" not in c and c not in (all_source_cols | known_derived):
+            errors.append(
+                f'output.decision_record: candidate "{c}" not found in source '
+                f"data or known derived columns"
+            )
+
     # final_rollup: group_key/target must resolve to a matched-output column
     available = all_source_cols | known_derived
     for i, bucket in enumerate(recipe.get("output", {}).get("final_rollup", []) or []):
@@ -962,6 +1090,26 @@ def resolve_matched_unmatched(output_cfg: dict) -> list[str] | None:
     return None
 
 
+# Fixed output column names of output.decision_record. Reserved: no source,
+# derived, or compare output column may take either name.
+DECISION_RECORD_COLUMNS = ("final_parent_id", "final_parent_src")
+
+
+def compare_output_names(output_cfg: dict) -> list[str]:
+    """Ordered output.compare_columns[].output names ([] when unconfigured)."""
+    return [
+        e["output"]
+        for e in (output_cfg.get("compare_columns") or [])
+        if isinstance(e, dict) and e.get("output")
+    ]
+
+
+def output_computed_columns(output_cfg: dict) -> list[str]:
+    """Every column the presentation-layer computations emit, in emit order."""
+    cols = list(DECISION_RECORD_COLUMNS) if output_cfg.get("decision_record") else []
+    return cols + compare_output_names(output_cfg)
+
+
 # Static metadata columns the pipeline always creates in matched output.
 _STATIC_DERIVED_COLUMNS = {
     "match_step", "match_tier", "name_score",
@@ -987,6 +1135,7 @@ def known_derived_columns(recipe: dict, include_rollup: bool = True) -> set[str]
                 write_to = bucket.get("write_to", "rolled_supplier_id")
                 known.add(write_to)
                 known.add(f"{write_to}_changed")
+    known.update(output_computed_columns(recipe.get("output", {}) or {}))
     return known
 
 

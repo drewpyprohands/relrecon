@@ -698,6 +698,50 @@
           },
           "description": "Tie-breaker for selecting among duplicate destination matches."
         },
+        "decision_record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidates"
+          ],
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Ordered candidate columns. The first non-null (null = polars null or empty/whitespace-only string) value wins."
+            }
+          },
+          "description": "Presentation-layer ordered coalesce over candidate columns (single-phase only). Emits final_parent_id (the winning value) and final_parent_src (the candidate field name that supplied it). Both columns appear in an artifact only when listed in output.columns.matched."
+        },
+        "compare_columns": {
+          "type": "array",
+          "description": "Presentation-layer numeric comparisons (single-phase only). Each entry emits a column of literal 'higher'/'lower'/'same', left-relative. Any null operand yields an empty cell. Columns appear in an artifact only when listed in output.columns.matched.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "left",
+              "right",
+              "output"
+            ],
+            "properties": {
+              "left": {
+                "type": "string",
+                "description": "Left-hand column. 'higher' means left > right."
+              },
+              "right": {
+                "type": "string",
+                "description": "Right-hand column."
+              },
+              "output": {
+                "type": "string",
+                "description": "Name of the emitted observation column."
+              }
+            }
+          }
+        },
         "final_rollup": {
           "type": "array",
           "description": "Terminal, non-destructive rollup pass (single-phase only). Each bucket rolls a group to the tie-broken min of a target column across the given steps, writing an additive column plus a <write_to>_changed audit flag. Distinct from per-step tie_breaker, which resolves ties within one step.",

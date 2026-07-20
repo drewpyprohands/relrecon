@@ -520,6 +520,12 @@ def write_unmatched_export(unmatched_df, output_cfg: dict, path: str, fmt: str):
     """
     if unmatched_df is None:
         return None
+    from recipe import output_computed_columns
+    # decision_record/compare columns are matched-view only (they may ride on
+    # the unmatched frame purely to reach the merged view).
+    stowaways = [c for c in output_computed_columns(output_cfg) if c in unmatched_df.columns]
+    if stowaways:
+        unmatched_df = unmatched_df.drop(stowaways)
     unmatched_df = _ensure_reason_columns(unmatched_df)
     export_df = apply_column_mapping(unmatched_df, output_cfg, key="analysis")
     write_raw_data(export_df, path, fmt)
@@ -582,6 +588,114 @@ def build_merged_frame(matched_df, unmatched_df, output_cfg: dict,
         return matched_side
     unmatched_side = _side(unmatched_df, True)
     return pl.concat([matched_side, unmatched_side], how="vertical_relaxed")
+
+
+# ---------------------------------------------------------------------------
+# Presentation-layer computed columns (Issue #93)
+# ---------------------------------------------------------------------------
+
+def _blank_as_null(df, col: str) -> pl.Expr:
+    """Column as trimmed String, with absent/empty/whitespace-only as null."""
+    if col not in df.columns:
+        return pl.lit(None, pl.String)
+    trimmed = pl.col(col).cast(pl.String).str.strip_chars()
+    return pl.when(trimmed == "").then(None).otherwise(trimmed)
+
+
+def _decision_record_exprs(df, cfg: dict) -> list:
+    """final_parent_id / final_parent_src expressions for an ordered coalesce."""
+    candidates = list(cfg.get("candidates") or [])
+    cleaned = [_blank_as_null(df, c) for c in candidates]
+
+    src_expr = pl.lit(None, pl.String)
+    for name, expr in reversed(list(zip(candidates, cleaned, strict=True))):
+        src_expr = pl.when(expr.is_not_null()).then(pl.lit(name)).otherwise(src_expr)
+
+    return [
+        pl.coalesce(cleaned).alias("final_parent_id"),
+        src_expr.alias("final_parent_src"),
+    ]
+
+
+def _strict_numeric(df, col: str, entry_idx: int, role: str) -> pl.Expr:
+    """Column cast to Float64, aborting on any non-null value that fails.
+
+    Blank/whitespace-only is null (not an offender). No silent coercion: a
+    value that is present but not numeric is a config error, not a null.
+    """
+    if col not in df.columns:
+        return pl.lit(None, pl.Float64)
+
+    cleaned = _blank_as_null(df, col)
+    probe = df.select(
+        cleaned.alias("_raw"),
+        cleaned.cast(pl.Float64, strict=False).alias("_num"),
+    ).filter(pl.col("_raw").is_not_null() & pl.col("_num").is_null())
+
+    if probe.height > 0:
+        from recipe import RecipeValidationError
+        raise RecipeValidationError(
+            f'output.compare_columns[{entry_idx}]: {role} column "{col}" holds '
+            f'the non-numeric value "{probe.get_column("_raw")[0]}". '
+            "compare_columns is numeric-only -- remove the column from the "
+            "comparison or clean the data."
+        )
+    return cleaned.cast(pl.Float64, strict=False)
+
+
+def _compare_expr(df, entry: dict, entry_idx: int) -> pl.Expr:
+    """higher/lower/same observation for one compare_columns entry."""
+    left = _strict_numeric(df, entry["left"], entry_idx, "left")
+    right = _strict_numeric(df, entry["right"], entry_idx, "right")
+    return (
+        pl.when(left.is_null() | right.is_null()).then(pl.lit(None, pl.String))
+        .when(left > right).then(pl.lit("higher"))
+        .when(left < right).then(pl.lit("lower"))
+        .otherwise(pl.lit("same"))
+        .alias(entry["output"])
+    )
+
+
+def _matched_column_fields(output_cfg: dict) -> set:
+    """Field names referenced by output.columns.matched."""
+    referenced = set()
+    for entry in (output_cfg.get("columns") or {}).get("matched") or []:
+        if not isinstance(entry, dict):
+            continue
+        if "field" in entry:
+            referenced.add(entry["field"])
+        referenced.update(entry.get("fields") or [])
+    return referenced
+
+
+def apply_output_computations(df, output_cfg: dict):
+    """Attach decision_record / compare_columns columns to a frame.
+
+    Runs before any artifact is written, on the matched and unmatched frames
+    alike, so the merged view picks both up with no merged-view code: a
+    candidate absent from the unmatched frame is null there and the coalesce
+    falls through to a source-side candidate.
+
+    Computed columns are pruned unless ``output.columns.matched`` names them --
+    these features never auto-append a column to an artifact.
+    """
+    from recipe import output_computed_columns
+
+    computed = output_computed_columns(output_cfg)
+    if df is None or not computed or df.height == 0:
+        return df
+
+    exprs = []
+    if output_cfg.get("decision_record"):
+        exprs.extend(_decision_record_exprs(df, output_cfg["decision_record"]))
+    for i, entry in enumerate(output_cfg.get("compare_columns") or []):
+        exprs.append(_compare_expr(df, entry, i))
+
+    df = df.with_columns(exprs)
+
+    referenced = _matched_column_fields(output_cfg)
+    drop = [c for c in computed if c not in referenced]
+    return df.drop(drop) if drop else df
 
 
 def enrich_join(source_df, matched_df, enrich_key: str):

@@ -1,0 +1,45 @@
+name: Decision Record Non-Numeric Test
+description: >
+  Issue #93 abort case: compare_columns pointed at a text column. The run
+  must abort naming the column and the offending value, with zero artifacts
+  written.
+
+sources:
+  src:
+    file: dr_source.csv
+  dst:
+    file: dr_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw, clean]
+    inherit:
+      - source: dst_revenue
+        as: dst_revenue
+
+output:
+  format: csv
+  matched_unmatched: [merged, separate]
+  match_mode: best_match
+  compare_columns:
+    - left: l3_fmly_nm
+      right: dst_revenue
+      output: bad_cmp
+  columns:
+    matched:
+      - field: vnd_id
+        header: vnd_id
+      - field: bad_cmp
+        header: bad_cmp
