@@ -1096,10 +1096,10 @@ def run_pipeline(recipe: dict, base_dir: str = ".") -> dict:
     if "phases" in recipe:
         return _run_multi_phase(recipe, sources, norm, timings)
     else:
-        return _run_single_phase(recipe, sources, norm, timings)
+        return _run_single_phase(recipe, sources, norm, timings, base_dir)
 
 
-def _run_single_phase(recipe, sources, norm, timings):
+def _run_single_phase(recipe, sources, norm, timings, base_dir="."):
     """Run a classic single-phase pipeline (backward compatible)."""
     import time as _time
 
@@ -1132,7 +1132,7 @@ def _run_single_phase(recipe, sources, norm, timings):
     populations = _build_populations(recipe["populations"], sources)
 
     # Semantic field validation
-    val_errors, val_warnings = validate_fields(recipe, sources, populations)
+    val_errors, val_warnings = validate_fields(recipe, sources, populations, base_dir)
     for w in val_warnings:
         import sys
         print(f"[WARN] {w}", file=sys.stderr)

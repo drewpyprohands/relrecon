@@ -139,12 +139,14 @@ def _write_output(
     timing: dict | None = None,
     source_df=None,
     source_key: str | None = None,
+    base_dir: str = ".",
 ):
     """Write output files for a single-phase recipe (backward compatible)."""
     import time
 
     from recipe import (
         known_derived_columns,
+        load_groups,
         normalize_formats,
         resolve_matched_unmatched,
         resolve_summary_modes,
@@ -167,8 +169,9 @@ def _write_output(
 
     # Presentation-layer computed columns. Applied to both frames so the
     # merged view inherits them with no merged-view code.
-    matched_df = apply_output_computations(matched_df, output_cfg)
-    unmatched_df = apply_output_computations(unmatched_df, output_cfg)
+    group_defs, _ = load_groups(output_cfg, base_dir)
+    matched_df = apply_output_computations(matched_df, output_cfg, group_defs)
+    unmatched_df = apply_output_computations(unmatched_df, output_cfg, group_defs)
 
     summary_modes = resolve_summary_modes(output_cfg)
     formats = normalize_formats(output_cfg, default="xlsx")
@@ -666,7 +669,9 @@ def main() -> int:
                     remainder = remainder.filter(~build_filter_expr(garb_cfg["filter"]))
             pop_data["df"] = remainder
 
-        val_errors, val_warnings = validate_fields(recipe, sources, populations)
+        val_errors, val_warnings = validate_fields(
+            recipe, sources, populations, str(data_dir),
+        )
         summary = format_validation_summary(recipe, sources, populations, val_errors, val_warnings, schema_warnings)
         print(summary)
         return 1 if val_errors else 0
@@ -788,6 +793,7 @@ def main() -> int:
             timing=result.get("timing"),
             source_df=source_df,
             source_key=source_key,
+            base_dir=str(data_dir),
         )
 
     return 0

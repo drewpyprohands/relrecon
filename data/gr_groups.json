@@ -1,0 +1,27 @@
+{
+  "groups": [
+    {
+      "group_name": "hyatt",
+      "regex": "(?i)hyatt",
+      "exclude_regex": "(?i)whyattelsburg",
+      "match_columns": ["l3_fmly_nm", "l1_fmly_nm"],
+      "rollup_parent_id": "100049",
+      "notes": "staged for a later issue"
+    },
+    {
+      "group_name": "law eagles",
+      "values": ["Law Eagles", "Law Eagles Inc"],
+      "match_columns": ["l1_fmly_nm"]
+    },
+    {
+      "group_name": "key accounts",
+      "regex": "(?i)^key ",
+      "match_columns": ["l3_fmly_nm"]
+    },
+    {
+      "group_name": "ernst & young",
+      "regex": "(?i)ernst\\s*&\\s*young",
+      "match_columns": ["l3_fmly_nm", "l1_fmly_nm"]
+    }
+  ]
+}

@@ -734,6 +734,29 @@
           },
           "description": "Presentation-layer decision over candidate columns (single-phase only). Emits <write_to> and <write_to>_src. Columns appear in an artifact only when listed in output.columns.matched."
         },
+        "groups": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Path to groups.json. Resolved literally, then relative to the data base dir (same convention as aliases.json / stopwords.json)."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "all_match",
+                "first_match"
+              ],
+              "default": "all_match",
+              "description": "'all_match' (default) emits every matching group name as a list; 'first_match' emits a single name, the first matching group in groups.json file order."
+            }
+          },
+          "description": "Presentation-layer group tagging (single-phase only). Emits the reserved column 'group' from each row's own raw source values. Appears in an artifact only when listed in output.columns.matched."
+        },
         "compare_columns": {
           "type": "array",
           "description": "Presentation-layer comparisons (single-phase only). Each entry emits a column of literal 'higher'/'lower'/'same', left-relative. Both sides parse as integers -> numeric compare, otherwise lexicographic on the stripped strings. Any null operand yields an empty cell. Never aborts on data values. Columns appear in an artifact only when listed in output.columns.matched.",
