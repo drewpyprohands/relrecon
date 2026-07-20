@@ -1,0 +1,36 @@
+name: is_unmatched Collision Test
+description: >
+  Source data carries a literal column named is_unmatched (Issue #91). No
+  output.columns mapping, so the column reaches every output frame: merged
+  must abort, legacy and separate must pass it through untouched.
+
+sources:
+  src:
+    file: mu_source_is_unmatched.csv
+  dst:
+    file: mu_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw, clean]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+
+output:
+  format: csv
+  matched_unmatched: merged
+  summary: none
+  match_mode: best_match

@@ -556,9 +556,35 @@ def _resolve_merged_columns(matched_df, unmatched_df, output_cfg: dict,
     return resolved
 
 
+class MergedColumnCollisionError(ValueError):
+    """A frame entering the merged path already has an `is_unmatched` column."""
+
+
+def check_merged_reserved_collision(matched_df, unmatched_df) -> None:
+    """Raise if a frame entering the merged path already has `is_unmatched`.
+
+    Merged output appends its own boolean `is_unmatched` column, which would
+    silently overwrite a same-named source column. Fail instead.
+    """
+    hits = [
+        label
+        for label, df in (("matched", matched_df), ("unmatched", unmatched_df))
+        if df is not None and "is_unmatched" in df.columns
+    ]
+    if hits:
+        raise MergedColumnCollisionError(
+            'Source column "is_unmatched" collides with the reserved merged '
+            f"output column (present in the {' and '.join(hits)} frame). "
+            "Merged output would overwrite it with the origin flag. Rename "
+            "the source column, or drop 'merged' from "
+            "output.matched_unmatched."
+        )
+
+
 def build_merged_frame(matched_df, unmatched_df, output_cfg: dict,
                        derived: set | None = None, columns: list | None = None):
     """Matched rows + unmatched source rows as one presentation frame."""
+    check_merged_reserved_collision(matched_df, unmatched_df)
     cols = columns or _resolve_merged_columns(
         matched_df, unmatched_df, output_cfg, derived
     )

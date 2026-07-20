@@ -152,6 +152,7 @@ def _write_output(
     from report import (
         apply_column_mapping,
         build_merged_frame,
+        check_merged_reserved_collision,
         generate_report,
         sort_by_source_order,
         write_raw_data,
@@ -179,6 +180,11 @@ def _write_output(
         emit_separate = "separate" in mu_modes
         emit_merged = "merged" in mu_modes
         emit_companion = emit_separate
+
+    if emit_merged:
+        # Abort before any artifact is written -- separate/xlsx artifacts must
+        # not land when the merged view is unbuildable.
+        check_merged_reserved_collision(matched_df, unmatched_df)
 
     base = output_path.rsplit(".", 1)[0]
     format_is_list = isinstance(output_cfg.get("format"), list)
@@ -573,7 +579,10 @@ def main() -> int:
         print(f"[profile] matching imports: {_ptime.time()-_t:.3f}s")
         _t = _ptime.time()
 
-    from report import generate_report  # noqa: F401 (pre-warm import for profiling)
+    from report import (  # noqa: F401 (generate_report pre-warms for profiling)
+        MergedColumnCollisionError,
+        generate_report,
+    )
     if _profile:
         print(f"[profile] report imports: {_ptime.time()-_t:.3f}s")
         _t = _ptime.time()
@@ -770,19 +779,23 @@ def main() -> int:
                 ext = fmt if fmt in ("csv", "parquet") else "xlsx"
             output_path = f"output/{recipe_name}_{timestamp}.{ext}"
 
-        _write_output(
-            output_cfg=output_cfg,
-            matched_df=result["matched"],
-            unmatched_df=result.get("unmatched"),
-            output_path=output_path,
-            stats=stats,
-            recipe=recipe,
-            recipe_file=str(recipe_path.name),
-            mermaid_mode=mermaid_mode,
-            timing=result.get("timing"),
-            source_df=source_df,
-            source_key=source_key,
-        )
+        try:
+            _write_output(
+                output_cfg=output_cfg,
+                matched_df=result["matched"],
+                unmatched_df=result.get("unmatched"),
+                output_path=output_path,
+                stats=stats,
+                recipe=recipe,
+                recipe_file=str(recipe_path.name),
+                mermaid_mode=mermaid_mode,
+                timing=result.get("timing"),
+                source_df=source_df,
+                source_key=source_key,
+            )
+        except MergedColumnCollisionError as e:
+            print(f"\nError: {e}", file=sys.stderr)
+            return 1
 
     return 0
 
