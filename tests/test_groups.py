@@ -254,6 +254,36 @@ def test_reject_missing_file(tmp_path):
         load_groups(cfg, str(DATA_DIR))
 
 
+def test_bare_name_resolves_relative_to_base_dir(tmp_path):
+    """Literal first, then base_dir -- the aliases/stopwords convention."""
+    _groups_file(tmp_path, [VALID_GROUP], name="side.json")
+    groups, _ = load_groups(_cfg("side.json"), str(tmp_path))
+    assert groups[0]["group_name"] == "hyatt"
+
+
+def test_config_prefixed_path_resolves_literally(tmp_path, monkeypatch):
+    """`file: config/groups.json` works, exactly like `aliases: config/aliases.json`."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    _groups_file(cfg_dir, [VALID_GROUP], name="groups.json")
+    monkeypatch.chdir(tmp_path)
+    groups, _ = load_groups(_cfg("config/groups.json"), str(tmp_path / "data"))
+    assert groups[0]["group_name"] == "hyatt"
+
+
+def test_bare_name_with_file_in_config_names_the_fix(tmp_path, monkeypatch):
+    """The common mistake: sidecar dropped in config/, referenced bare."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    _groups_file(cfg_dir, [VALID_GROUP], name="groups.json")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError) as exc:
+        load_groups(_cfg("groups.json"), str(tmp_path / "data"))
+    msg = str(exc.value)
+    assert 'A file exists at "config/groups.json"' in msg
+    assert 'write "file: config/groups.json"' in msg
+
+
 def test_reject_invalid_json(tmp_path):
     assert "not valid JSON" in _load_errors(None, tmp_path, raw="{not json")
 
@@ -273,6 +303,51 @@ def test_reject_invalid_regex_names_the_group(tmp_path):
     msg = _load_errors([bad], tmp_path)
     assert "invalid regex" in msg
     assert '"hyatt"' in msg
+
+
+# ---------------------------------------------------------------------------
+# Regex dialect: validation must use the engine that actually matches.
+# Python's re and Polars' Rust regex disagree in both directions.
+# ---------------------------------------------------------------------------
+
+def test_reject_lookahead_at_load_time(tmp_path):
+    """Valid in Python re, rejected by the Rust engine -- must fail at load."""
+    bad = dict(VALID_GROUP, regex="(?i)(?=hy)hyatt")
+    msg = _load_errors([bad], tmp_path)
+    assert "invalid regex" in msg
+    assert "look-around" in msg
+
+
+def test_reject_lookbehind_in_exclude_regex_at_load_time(tmp_path):
+    bad = dict(VALID_GROUP, exclude_regex="(?<=w)hyatt")
+    msg = _load_errors([bad], tmp_path)
+    assert "invalid exclude_regex" in msg
+    assert "look-around" in msg
+
+
+def test_lookahead_never_reaches_the_write_path(tmp_path):
+    """The contract is a named load-time error, not a ComputeError mid-write."""
+    recipe = load_recipe(RECIPE)
+    bad = dict(VALID_GROUP, regex="(?i)(?=hy)hyatt")
+    recipe["output"]["groups"]["file"] = _groups_file(tmp_path, [bad])
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="invalid regex"):
+        _run(recipe, out)
+    assert not out.exists() or not list(out.glob("*"))
+
+
+def test_accepts_unicode_class_python_re_rejects(tmp_path):
+    r"""\p{Lu} is valid for the Rust engine; validating with re would reject it."""
+    good = dict(VALID_GROUP, regex=r"(?i)\p{Lu}+yatt")
+    groups, _ = load_groups(_cfg(_groups_file(tmp_path, [good])), ".")
+    assert groups[0]["regex"] == r"(?i)\p{Lu}+yatt"
+
+
+def test_unicode_class_group_tags_rows(tmp_path):
+    """And it matches at runtime, proving the accept was not merely permissive."""
+    df = pl.DataFrame({"l3_fmly_nm": ["Hyatt", "zzz"]})
+    group = dict(VALID_GROUP, regex=r"\p{Lu}yatt")
+    assert _tag(df, [group]) == [["hyatt"], []]
 
 
 def test_reject_invalid_exclude_regex_names_the_group(tmp_path):
@@ -499,6 +574,32 @@ def test_matching_runs_on_raw_values_only():
     """No normalization: a punctuated variant only matches if the regex says so."""
     df = pl.DataFrame({"l3_fmly_nm": ["H-Y-A-T-T"]})
     assert _tag(df, [VALID_GROUP]) == [[]]
+
+
+def test_values_case_folding_matches_the_row_side():
+    """Both sides fold through Polars. Python casefold() would map the
+    configured "STRASSE" onto "strasse" while the row stays "straße",
+    silently missing the tag."""
+    df = pl.DataFrame({"l3_fmly_nm": ["Straße"]})
+    group = {
+        "group_name": "s",
+        "values": ["STRASSE"],
+        "match_columns": ["l3_fmly_nm"],
+    }
+    assert _tag(df, [group]) == [[]]
+
+    exact = dict(group, values=["STRASSE".replace("SS", "ß")])
+    assert _tag(df, [exact]) == [["s"]]
+
+
+def test_values_case_insensitivity_still_holds_for_plain_ascii():
+    df = pl.DataFrame({"l3_fmly_nm": ["  LAW EAGLES "]})
+    group = {
+        "group_name": "e",
+        "values": ["law eagles"],
+        "match_columns": ["l3_fmly_nm"],
+    }
+    assert _tag(df, [group]) == [["e"]]
 
 
 def test_non_string_column_is_cast_before_matching():

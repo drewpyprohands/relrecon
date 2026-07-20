@@ -6,7 +6,6 @@ and parses the filter DSL into Polars expressions.
 """
 
 import json
-import re
 from pathlib import Path
 
 import polars as pl
@@ -1236,6 +1235,27 @@ _GROUP_KNOWN_KEYS = {
 }
 
 
+def _regex_rejection(pattern: str) -> str | None:
+    """Reason the matching engine rejects ``pattern``, or None if it accepts.
+
+    Compiled through Polars, not ``re``: matching runs on the Rust regex
+    crate, whose dialect differs from Python's in both directions. Python
+    accepts lookaround that Rust rejects, and Rust accepts Unicode classes
+    like ``\\p{Lu}`` that Python rejects -- validating with ``re`` would both
+    miss real failures and reject working patterns.
+    """
+    try:
+        pl.DataFrame({"_probe": [""]}).select(
+            pl.col("_probe").str.contains(pattern)
+        )
+    except Exception as exc:  # polars raises ComputeError, not re.error
+        # Keep the engine's own diagnosis, drop the expression dump it
+        # appends -- the recipe author never wrote that expression.
+        detail = str(exc).split("This error occurred in the following")[0]
+        return " ".join(detail.split()) or str(exc)
+    return None
+
+
 def groups_columns(output_cfg: dict) -> list[str]:
     """The column output.groups emits ([] when unconfigured)."""
     return [GROUP_COLUMN] if (output_cfg.get("groups") or {}).get("file") else []
@@ -1258,9 +1278,17 @@ def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list
     if not path.exists():
         path = Path(base_dir) / ref
     if not path.exists():
+        hint = ""
+        if "/" not in ref and (Path("config") / ref).exists():
+            hint = (
+                f' A file exists at "config/{ref}" -- sidecar paths are not '
+                'searched under config/, so write "file: config/'
+                f'{ref}", the same way recipes spell '
+                '"aliases: config/aliases.json".'
+            )
         raise ValueError(
             f'output.groups: file "{ref}" not found (tried "{ref}" and '
-            f'"{Path(base_dir) / ref}").'
+            f'"{Path(base_dir) / ref}").{hint}'
         )
     try:
         raw = json.loads(path.read_text())
@@ -1305,12 +1333,11 @@ def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list
             pattern = group.get(key)
             if pattern is None:
                 continue
-            try:
-                re.compile(pattern)
-            except re.error as exc:
+            reason = _regex_rejection(pattern)
+            if reason:
                 errors.append(
                     f"output.groups: group {label} has an invalid {key} "
-                    f'"{pattern}": {exc}'
+                    f'"{pattern}": {reason}'
                 )
         if not group.get("regex") and not has_values:
             errors.append(

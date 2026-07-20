@@ -782,7 +782,16 @@ def _group_hit(df, group: dict) -> pl.Expr:
         hits.extend(r.str.contains(group["regex"]) for r in raw)
     values = group.get("values") or []
     if values:
-        wanted = [str(v).strip().casefold() for v in values]
+        # Both sides fold through the same Polars function. Doing the values
+        # side in Python instead would disagree wherever the two case rules
+        # differ -- casefold() maps "straße" to "strasse", to_lowercase()
+        # leaves it alone -- and the row would silently fail to tag.
+        wanted = (
+            pl.Series([str(v) for v in values], dtype=pl.String)
+            .str.strip_chars()
+            .str.to_lowercase()
+            .to_list()
+        )
         hits.extend(r.str.strip_chars().str.to_lowercase().is_in(wanted) for r in raw)
     included = pl.any_horizontal(hits).fill_null(False)
 
