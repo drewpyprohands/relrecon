@@ -317,10 +317,23 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
             output_cfg = (recipe or {}).get("output", {})
             derived = _known_derived(recipe)
             merged_cols = None if (recipe_columns and "matched" in recipe_columns) else main_cols
-            write_df = build_merged_frame(
-                matched_df, unmatched_df, output_cfg, derived, columns=merged_cols,
+            cols = merged_cols or _resolve_merged_columns(
+                matched_df, unmatched_df, output_cfg, derived
             )
-            main_cols = [(c, c) for c in write_df.columns]
+            # Keep field names on the frame -- _write_data keys score rounding
+            # and the conditional banding off the field, not the header, so
+            # renaming here would silently drop both (Issue #95). Headers are
+            # applied by _write_headers from main_cols.
+            seen: set = set()
+            frame_cols = []
+            for field, _header in cols:
+                if field not in seen:
+                    seen.add(field)
+                    frame_cols.append((field, field))
+            write_df = build_merged_frame(
+                matched_df, unmatched_df, output_cfg, derived, columns=frame_cols,
+            )
+            main_cols = [*cols, ("is_unmatched", "is_unmatched")]
         else:
             write_df = matched_df
 
