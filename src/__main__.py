@@ -137,6 +137,8 @@ def _write_output(
     recipe_file: str,
     mermaid_mode: str = "default",
     timing: dict | None = None,
+    source_df=None,
+    source_key: str | None = None,
 ):
     """Write output files for a single-phase recipe (backward compatible)."""
     import time
@@ -151,9 +153,16 @@ def _write_output(
         apply_column_mapping,
         build_merged_frame,
         generate_report,
+        sort_by_source_order,
         write_raw_data,
         write_unmatched_export,
     )
+
+    # Deterministic row order: sort once here so every downstream artifact
+    # (separate, merged, xlsx) inherits it. Unmatched is already in source
+    # order -- a filter of the source frame -- so it is left untouched.
+    if source_key:
+        matched_df = sort_by_source_order(matched_df, source_df, source_key)
 
     summary_modes = resolve_summary_modes(output_cfg)
     formats = normalize_formats(output_cfg, default="xlsx")
@@ -245,6 +254,27 @@ def _write_output(
 
 
 
+def _resolve_source_order(recipe: dict, result: dict):
+    """(source_frame, key_field) for output ordering, or (None, None).
+
+    Key precedence mirrors the pipeline's tracking field: the population's
+    ``record_key``, else the first step's source match field.
+    """
+    steps = recipe.get("steps") or []
+    if not steps:
+        return None, None
+    pop1 = steps[0].get("source")
+    source_df = (result.get("populations") or {}).get(pop1)
+    if source_df is None:
+        return None, None
+    pop_cfg = (recipe.get("populations") or {}).get(pop1) or {}
+    key = pop_cfg.get("record_key")
+    if not key:
+        match_fields = steps[0].get("match_fields") or [{}]
+        key = match_fields[0].get("source")
+    return source_df, key
+
+
 def _build_enriched_output(
     recipe: dict,
     output_cfg: dict,
@@ -300,15 +330,21 @@ def _write_phase_output(
     timestamp: str,
     mermaid_mode: str = "default",
     phase_unmatched_df=None,
+    source_df=None,
+    source_key: str | None = None,
 ):
     """Write output files for a single phase in a multi-phase pipeline."""
     from recipe import resolve_summary_modes
     from report import (
         apply_column_mapping,
         generate_report,
+        sort_by_source_order,
         write_raw_data,
         write_unmatched_export,
     )
+
+    if source_key:
+        phase_df = sort_by_source_order(phase_df, source_df, source_key)
 
     phase_output = phase_cfg.get("output", {})
     fmt = phase_output.get("format", "csv")
@@ -699,6 +735,7 @@ def main() -> int:
     else:
         # Single-phase: top-level output (backward compatible)
         output_cfg = recipe.get("output", {})
+        source_df, source_key = _resolve_source_order(recipe, result)
 
         # Enriched mode for single-phase
         if output_cfg.get("mode") == "enriched":
@@ -713,6 +750,9 @@ def main() -> int:
             result = dict(result)
             result["matched"] = enriched_df
             result["unmatched"] = None
+            # Enriched output is every enrichment-source row in that source's
+            # own order (enrich_join preserves it) -- not a pop1-keyed frame.
+            source_df, source_key = None, None
 
         output_path = args.output
         if output_path is None:
@@ -740,6 +780,8 @@ def main() -> int:
             recipe_file=str(recipe_path.name),
             mermaid_mode=mermaid_mode,
             timing=result.get("timing"),
+            source_df=source_df,
+            source_key=source_key,
         )
 
     return 0
