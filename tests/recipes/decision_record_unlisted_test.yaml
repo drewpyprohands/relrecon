@@ -37,6 +37,7 @@ output:
   match_mode: best_match
   decision_record:
     candidates: [derived_l1_id, src_l1_id]
+    write_to: final_l1_id
   compare_columns:
     - left: src_revenue
       right: dst_revenue

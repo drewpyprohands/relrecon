@@ -423,18 +423,20 @@ def validate_recipe(recipe: dict) -> list[str]:
             )
             taken[wt] = "a final_rollup output column"
             taken[f"{wt}_changed"] = "a final_rollup audit column"
-    # Reserved names win the description: applied after the derived paths so a
-    # collision reports the reserved name rather than the shadowing column.
-    for c in DECISION_RECORD_COLUMNS:
-        taken[c] = "a reserved decision_record output column"
+    dr_names = decision_record_columns(out_cfg)
+    # Capture what each write_to name already meant before it is claimed --
+    # overwriting first would hide the very collision we are looking for.
+    dr_clashes = {n: taken[n] for n in dr_names if n in taken}
+    for c in dr_names:
+        taken[c] = "a decision_record output column"
 
     # Columns the presentation layer generates. Nothing else may produce them
     # and nothing may read them back as an input.
     generated: dict[str, str] = {
         c: "a compare_columns output column" for c in compare_names
     }
-    for c in DECISION_RECORD_COLUMNS:
-        generated[c] = "a reserved decision_record output column"
+    for c in dr_names:
+        generated[c] = "a decision_record output column"
 
     for name, where in derived_sources:
         if name in generated:
@@ -478,6 +480,11 @@ def validate_recipe(recipe: dict) -> list[str]:
                 )
 
     if decision_record is not None:
+        if not decision_record.get("write_to"):
+            critical.append(
+                "output.decision_record: write_to is required. It names the "
+                "decided column and its <write_to>_src companion."
+            )
         candidates = decision_record.get("candidates") or []
         if len(candidates) < 2:
             critical.append(
@@ -485,17 +492,32 @@ def validate_recipe(recipe: dict) -> list[str]:
                 f"(got {len(candidates)}). A coalesce over one column is a "
                 "rename, not a decision."
             )
+        select = decision_record.get("select", "first")
+        if select not in ("first", "min", "max"):
+            critical.append(
+                f'output.decision_record: select "{select}" is not one of '
+                "first, min, max."
+            )
         for c in candidates:
-            if c in compare_names:
+            if c in generated:
                 critical.append(
-                    f'output.decision_record: candidate "{c}" names a '
-                    "compare_columns output. Cross-feature references are not "
+                    f'output.decision_record: candidate "{c}" names '
+                    f"{generated[c]}. Cross-feature references are not "
                     "supported -- use a source or derived column."
                 )
-            if c in DECISION_RECORD_COLUMNS:
+        # write_to collisions are policed by the same map as compare outputs.
+        for name in dr_names:
+            clash = dr_clashes.get(name)
+            if clash:
                 critical.append(
-                    f'output.decision_record: candidate "{c}" is a reserved '
-                    "decision_record output column and cannot be a candidate."
+                    f'output.decision_record: write_to emits "{name}", which '
+                    f"collides with {clash}. Choose a different write_to."
+                )
+            if name in compare_names:
+                critical.append(
+                    f'output.decision_record: write_to emits "{name}", which '
+                    "collides with a compare_columns output. Choose a "
+                    "different write_to."
                 )
 
     # The computed columns are matched-side only: they are evaluated against
@@ -906,12 +928,12 @@ def validate_fields(
     # rules. Name collisions against actual source columns and candidate
     # existence can only be checked once the sources are loaded.
     out_cfg = recipe.get("output", {}) or {}
-    for name in DECISION_RECORD_COLUMNS:
-        if out_cfg.get("decision_record") and name in all_source_cols:
+    for name in decision_record_columns(out_cfg):
+        if name in all_source_cols:
             errors.append(
-                f'output.decision_record: "{name}" is a reserved output column '
-                "but a source dataset already provides it. Rename the source "
-                "column."
+                f'output.decision_record: write_to emits "{name}", which '
+                "collides with an existing source column. Choose a different "
+                "write_to."
             )
     for i, entry in enumerate(out_cfg.get("compare_columns") or []):
         if not isinstance(entry, dict):
@@ -1133,9 +1155,13 @@ def resolve_matched_unmatched(output_cfg: dict) -> list[str] | None:
     return None
 
 
-# Fixed output column names of output.decision_record. Reserved: no source,
-# derived, or compare output column may take either name.
-DECISION_RECORD_COLUMNS = ("final_parent_id", "final_parent_src")
+def decision_record_columns(output_cfg: dict) -> list[str]:
+    """The two columns output.decision_record emits, per its write_to."""
+    cfg = output_cfg.get("decision_record") or {}
+    write_to = cfg.get("write_to")
+    if not write_to:
+        return []
+    return [write_to, f"{write_to}_src"]
 
 
 def compare_output_names(output_cfg: dict) -> list[str]:
@@ -1149,8 +1175,7 @@ def compare_output_names(output_cfg: dict) -> list[str]:
 
 def output_computed_columns(output_cfg: dict) -> list[str]:
     """Every column the presentation-layer computations emit, in emit order."""
-    cols = list(DECISION_RECORD_COLUMNS) if output_cfg.get("decision_record") else []
-    return cols + compare_output_names(output_cfg)
+    return decision_record_columns(output_cfg) + compare_output_names(output_cfg)
 
 
 # Static metadata columns the pipeline always creates in matched output.

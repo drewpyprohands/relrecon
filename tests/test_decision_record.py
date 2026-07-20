@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from matching import run_pipeline
 from recipe import (
-    RecipeValidationError,
     known_derived_columns,
     load_recipe,
     validate_fields,
@@ -27,7 +26,7 @@ EXPECTED = Path(__file__).parent / "expected"
 
 RECIPE = str(RECIPES / "decision_record_test.yaml")
 UNLISTED_RECIPE = str(RECIPES / "decision_record_unlisted_test.yaml")
-NONNUMERIC_RECIPE = str(RECIPES / "decision_record_nonnumeric_test.yaml")
+LEX_RECIPE = str(RECIPES / "decision_record_lexicographic_test.yaml")
 
 
 def _load_main():
@@ -81,7 +80,7 @@ def test_merged_unmatched_row_falls_through(tmp_path):
     _run(load_recipe(RECIPE), tmp_path)
     rows = (tmp_path / "data_merged.csv").read_text().splitlines()
     unmatched = [r for r in rows if r.endswith(",true")]
-    assert unmatched == ["V004,unmatched,S1004,src_l1_id,,,true"]
+    assert unmatched == ["V004,unmatched,S1004,src_l1_id,,,,,true"]
 
 
 def test_all_candidates_null_row_is_empty(tmp_path):
@@ -89,8 +88,8 @@ def test_all_candidates_null_row_is_empty(tmp_path):
     _run(load_recipe(RECIPE), tmp_path)
     df = pl.read_csv(tmp_path / "data.csv")
     row = df.filter(pl.col("vnd_id") == "V003").to_dicts()[0]
-    assert row["final_parent_id"] is None
-    assert row["final_parent_src"] is None
+    assert row["final_l1_id"] is None
+    assert row["final_l1_id_src"] is None
 
 
 def test_whitespace_candidate_falls_through(tmp_path):
@@ -98,22 +97,14 @@ def test_whitespace_candidate_falls_through(tmp_path):
     _run(load_recipe(RECIPE), tmp_path)
     df = pl.read_csv(tmp_path / "data.csv")
     row = df.filter(pl.col("vnd_id") == "V002").to_dicts()[0]
-    assert row["final_parent_id"] == "S1002"
-    assert row["final_parent_src"] == "src_l1_id"
+    assert row["final_l1_id"] == "S1002"
+    assert row["final_l1_id_src"] == "src_l1_id"
 
 
 def test_empty_string_candidate_is_null():
     """A literal empty string (not just a null) is a fall-through, not a value."""
     df = pl.DataFrame({"a": ["", "x"], "b": ["fallback", "fallback"]})
-    out = apply_output_computations(df, {
-        "decision_record": {"candidates": ["a", "b"]},
-        "columns": {"matched": [
-            {"field": "final_parent_id", "header": "final_parent_id"},
-            {"field": "final_parent_src", "header": "final_parent_src"},
-        ]},
-    })
-    assert out["final_parent_id"].to_list() == ["fallback", "x"]
-    assert out["final_parent_src"].to_list() == ["b", "a"]
+    assert _decide(df, ["a", "b"]) == (["fallback", "x"], ["b", "a"])
 
 
 # ---------------------------------------------------------------------------
@@ -121,52 +112,250 @@ def test_empty_string_candidate_is_null():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("left,right,expected", [
-    (10.0, 5.0, "higher"),
-    (5.0, 10.0, "lower"),
-    (5.0, 5.0, "same"),
-    (None, 5.0, None),
-    (5.0, None, None),
+    ("10", "5", "higher"),
+    ("5", "10", "lower"),
+    ("5", "5", "same"),
+    (None, "5", None),
+    ("5", None, None),
     (None, None, None),
 ])
 def test_compare_cases(left, right, expected):
     """higher/lower/same are left-relative; any null operand yields an empty cell."""
-    df = pl.DataFrame({"l": [left], "r": [right]}, schema={"l": pl.Float64, "r": pl.Float64})
+    df = pl.DataFrame({"l": [left], "r": [right]}, schema={"l": pl.String, "r": pl.String})
+    assert _cmp(df, left="l", right="r") == [expected]
+
+
+def _cmp(df, **entry):
+    """Compute one compare_columns entry and return its column as a list."""
+    entry.setdefault("output", "cmp")
     out = apply_output_computations(df, {
-        "compare_columns": [{"left": "l", "right": "r", "output": "cmp"}],
-        "columns": {"matched": [{"field": "cmp", "header": "cmp"}]},
+        "compare_columns": [entry],
+        "columns": {"matched": [{"field": entry["output"], "header": entry["output"]}]},
     })
-    assert out["cmp"].to_list() == [expected]
+    return out[entry["output"]].to_list()
 
 
-def test_nonnumeric_aborts_naming_column_and_value():
-    """A present non-numeric value is a config error, never a silent null."""
+def test_nonnumeric_never_aborts():
+    """An unparseable value is data, not a config error. No abort path exists."""
     df = pl.DataFrame({"l": ["12", "abc"], "r": ["1", "2"]})
-    with pytest.raises(RecipeValidationError) as exc:
-        apply_output_computations(df, {
-            "compare_columns": [{"left": "l", "right": "r", "output": "cmp"}],
-            "columns": {"matched": [{"field": "cmp", "header": "cmp"}]},
-        })
-    assert '"l"' in str(exc.value)
-    assert '"abc"' in str(exc.value)
+    assert _cmp(df, left="l", right="r", strip_prefix="none") == ["higher", "higher"]
 
 
-def test_nonnumeric_run_writes_zero_artifacts(tmp_path):
-    """The abort happens before any artifact reaches disk."""
-    recipe = load_recipe(NONNUMERIC_RECIPE)
+@pytest.mark.parametrize("left,right,expected", [
+    ("abc", "abd", "lower"),      # both unparseable -> lexicographic
+    ("abd", "abc", "higher"),
+    ("abc", "abc", "same"),
+    ("abc", "12", "higher"),      # one side parses -> still lexicographic
+])
+def test_lexicographic_fallback(left, right, expected):
+    """Unless both sides parse as integers, the compare is lexicographic."""
+    df = pl.DataFrame({"l": [left], "r": [right]})
+    assert _cmp(df, left="l", right="r", strip_prefix="none") == [expected]
+
+
+def test_numeric_beats_lexicographic_when_both_parse():
+    """9 vs 100 is 'lower' numerically though 'higher' as text.
+
+    Parseability, not strip_prefix, picks the branch: bare digits parse under
+    every strip setting, so both spellings agree here.
+    """
+    df = pl.DataFrame({"l": ["9"], "r": ["100"]})
+    assert _cmp(df, left="l", right="r") == ["lower"]
+    assert _cmp(df, left="l", right="r", strip_prefix="none") == ["lower"]
+
+
+def test_decimals_do_not_parse_as_int64():
+    """Int64 parsing (tie-breaker parity) sends decimals to the text branch."""
+    df = pl.DataFrame({"l": ["9.5"], "r": ["10.5"]})
+    assert _cmp(df, left="l", right="r") == ["higher"]
+
+
+def test_alpha_strip_default_vs_none():
+    """Default alpha strip parses the digits; none compares the raw strings."""
+    df = pl.DataFrame({"l": ["S1001"], "r": ["P3100"]})
+    assert _cmp(df, left="l", right="r") == ["lower"]
+    assert _cmp(df, left="l", right="r", strip_prefix="none") == ["higher"]
+
+
+def test_alpha_strip_makes_prefix_only_difference_same():
+    """Documented consequence: AB123 vs CD123 reads 'same' under alpha strip."""
+    df = pl.DataFrame({"l": ["AB123"], "r": ["CD123"]})
+    assert _cmp(df, left="l", right="r") == ["same"]
+    assert _cmp(df, left="l", right="r", strip_prefix="none") == ["lower"]
+
+
+def test_anchored_regex_strip_prefix():
+    """A non-alpha strip_prefix is an anchored regex, as in tie_breaker."""
+    df = pl.DataFrame({"l": ["VND-9"], "r": ["VND-100"]})
+    assert _cmp(df, left="l", right="r", strip_prefix="VND-") == ["lower"]
+
+
+def test_lexicographic_recipe_runs_and_writes(tmp_path):
+    """End-to-end: a text column in a compare pair completes and writes."""
+    recipe = load_recipe(LEX_RECIPE)
     result = run_pipeline(recipe, base_dir=str(DATA_DIR))
     main = _load_main()
-    with pytest.raises(RecipeValidationError):
-        main._write_output(
-            output_cfg=recipe["output"],
-            matched_df=result["matched"],
-            unmatched_df=result.get("unmatched"),
-            output_path=str(tmp_path / "data.csv"),
-            stats=result.get("stats", {}),
-            recipe=recipe,
-            recipe_file="decision_record_nonnumeric_test.yaml",
-            timing=result.get("timing"),
-        )
-    assert [p.name for p in tmp_path.rglob("*") if p.is_file()] == []
+    main._write_output(
+        output_cfg=recipe["output"],
+        matched_df=result["matched"],
+        unmatched_df=result.get("unmatched"),
+        output_path=str(tmp_path / "data.csv"),
+        stats=result.get("stats", {}),
+        recipe=recipe,
+        recipe_file="decision_record_lexicographic_test.yaml",
+        timing=result.get("timing"),
+        source_df=result["populations"].get("pop1"),
+        source_key="vnd_id",
+    )
+    rows = (tmp_path / "data.csv").read_text().splitlines()
+    assert rows[0] == "vnd_id,text_cmp"
+    # Names sort above the revenue digits, so every populated row is 'higher'.
+    assert [r.split(",")[1] for r in rows[1:]] == ["higher", "higher", "higher"]
+
+
+# ---------------------------------------------------------------------------
+# select: first | min | max
+# ---------------------------------------------------------------------------
+
+def _decide(df, candidates, **cfg):
+    """Compute one decision_record and return (value list, src list)."""
+    cfg.setdefault("write_to", "decided")
+    cfg["candidates"] = candidates
+    out = apply_output_computations(df, {
+        "decision_record": cfg,
+        "columns": {"matched": [
+            {"field": "decided", "header": "decided"},
+            {"field": "decided_src", "header": "decided_src"},
+        ]},
+    })
+    return out["decided"].to_list(), out["decided_src"].to_list()
+
+
+def test_select_first_is_the_default():
+    """Absent select behaves as list-order coalesce."""
+    df = pl.DataFrame({"a": ["700"], "b": ["100"]})
+    assert _decide(df, ["a", "b"]) == (["700"], ["a"])
+
+
+@pytest.mark.parametrize("select,value,src", [
+    ("min", "100", "b"),
+    ("max", "700", "a"),
+])
+def test_select_min_max(select, value, src):
+    df = pl.DataFrame({"a": ["700"], "b": ["100"]})
+    assert _decide(df, ["a", "b"], select=select) == ([value], [src])
+
+
+def test_select_min_tie_falls_back_to_list_order():
+    """Equal values resolve to the earlier candidate, so _src reads 'a'."""
+    df = pl.DataFrame({"a": ["100"], "b": ["100"]})
+    assert _decide(df, ["a", "b"], select="min") == (["100"], ["a"])
+
+
+def test_select_min_skips_unpopulated_candidates():
+    """A null candidate never wins, however it would have sorted."""
+    df = pl.DataFrame({"a": [None], "b": ["500"]}, schema={"a": pl.String, "b": pl.String})
+    assert _decide(df, ["a", "b"], select="min") == (["500"], ["b"])
+
+
+def test_select_min_all_unparseable_falls_back_to_list_order():
+    """Nothing parses -> no value ordering exists -> earliest populated wins."""
+    df = pl.DataFrame({"a": ["xx"], "b": ["yy"]})
+    assert _decide(df, ["a", "b"], select="min") == (["xx"], ["a"])
+
+
+def test_select_min_unparseable_cannot_win():
+    """A candidate that will not parse loses to one that does."""
+    df = pl.DataFrame({"a": ["xx"], "b": ["500"]})
+    assert _decide(df, ["a", "b"], select="min") == (["500"], ["b"])
+
+
+def test_select_min_uses_strip_prefix():
+    """Alpha strip is applied before parsing, so S9 (9) beats P100 (100).
+
+    Under strip_prefix: none neither value parses, so min/max has nothing to
+    order by and the decision falls back to list order.
+    """
+    df = pl.DataFrame({"a": ["S9"], "b": ["P100"]})
+    assert _decide(df, ["a", "b"], select="min") == (["S9"], ["a"])
+    assert _decide(df, ["a", "b"], select="min", strip_prefix="none") == (["S9"], ["a"])
+
+
+def test_select_min_all_null_row_is_empty():
+    df = pl.DataFrame({"a": [None], "b": ["  "]}, schema={"a": pl.String, "b": pl.String})
+    assert _decide(df, ["a", "b"], select="min") == ([None], [None])
+
+
+def test_decided_value_is_the_original_not_the_stripped_form():
+    """Stripping is a parsing device; the emitted value keeps its prefix."""
+    df = pl.DataFrame({"a": ["S700"], "b": ["P100"]})
+    assert _decide(df, ["a", "b"], select="min") == (["P100"], ["b"])
+
+
+# ---------------------------------------------------------------------------
+# Permutation fixture (owner's recipe + expected-winners table)
+# ---------------------------------------------------------------------------
+
+PERM_RECIPE = str(
+    Path(__file__).parent.parent / "config" / "recipes" / "multipop_comparison_rollup.yaml"
+)
+
+# (row, source, dest, rolled, case, decided, _src) from Issue #93 comment 2.
+PERM_EXPECTED = [
+    ("vnd5001", "700", "100", "100", 5, "100", "rolled_l1_id"),
+    ("vnd5002", "100", "700", "100", 1, "100", "rolled_l1_id"),
+    ("vnd6001", "900", "500", "100", 4, "100", "rolled_l1_id"),
+    ("vnd7001", "800", "30", "800", 6, "30", "derived_l1_id"),
+    ("vnd7002", "30", "800", "30", 1, "30", "rolled_l1_id"),
+]
+
+
+def _run_permutation(tmp_path):
+    recipe = load_recipe(PERM_RECIPE)
+    result = run_pipeline(recipe, base_dir=str(DATA_DIR))
+    main = _load_main()
+    main._write_output(
+        output_cfg=recipe["output"],
+        matched_df=result["matched"],
+        unmatched_df=result.get("unmatched"),
+        output_path=str(tmp_path / "data.csv"),
+        stats=result.get("stats", {}),
+        recipe=recipe,
+        recipe_file="multipop_comparison_rollup.yaml",
+        timing=result.get("timing"),
+        source_df=result["populations"].get("mg_pop"),
+        source_key="vnd_id",
+    )
+    return pl.read_csv(tmp_path / "data_merged.csv", infer_schema_length=0)
+
+
+@pytest.mark.parametrize("row,source,dest,rolled,case,decided,src", PERM_EXPECTED)
+def test_select_min_permutation_winners(tmp_path, row, source, dest, rolled, case, decided, src):
+    """Cases 1/4/5/6 over {rolled, dest, source}; 2 and 3 cannot occur."""
+    df = _run_permutation(tmp_path)
+    got = df.filter(pl.col("Source L3 ID") == row).to_dicts()[0]
+    assert got["Source Parent ID"] == source
+    assert got["Destination L1 ID"] == dest
+    assert got["Rolled L1 ID"] == rolled
+    assert got["Decided Parent ID"] == decided, f"case {case}"
+    assert got["Decided Parent Src"] == src, f"case {case}"
+
+
+def test_permutation_merged_byte_exact(tmp_path):
+    _run_permutation(tmp_path)
+    assert (tmp_path / "data_merged.csv").read_text() == (
+        EXPECTED / "multipop_comparison_merged.csv"
+    ).read_text()
+
+
+def test_permutation_impossible_cases_absent(tmp_path):
+    """rolled > source cannot occur under rollup order: asc (cases 2 and 3)."""
+    df = _run_permutation(tmp_path).filter(pl.col("is_unmatched") == "false")
+    offenders = [
+        r for r in df.to_dicts()
+        if int(r["Rolled L1 ID"]) > int(r["Source Parent ID"])
+    ]
+    assert offenders == []
 
 
 # ---------------------------------------------------------------------------
@@ -178,14 +367,14 @@ def test_columns_absent_when_not_listed(tmp_path):
     _run(load_recipe(UNLISTED_RECIPE), tmp_path)
     for name in ("data.csv", "data_merged.csv", "data_unmatched.csv"):
         header = (tmp_path / name).read_text().splitlines()[0]
-        for col in ("final_parent_id", "final_parent_src", "revenue_cmp"):
+        for col in ("final_l1_id", "final_l1_id_src", "revenue_cmp"):
             assert col not in header, f"{col} leaked into {name}"
 
 
 def test_computed_columns_register_in_known_derived():
     """Both features' outputs are referenceable as derived columns."""
     known = known_derived_columns(load_recipe(RECIPE))
-    assert {"final_parent_id", "final_parent_src", "revenue_cmp",
+    assert {"final_l1_id", "final_l1_id_src", "revenue_cmp",
             "revenue_cmp_inv"} <= known
 
 
@@ -218,8 +407,8 @@ def test_candidates_below_two_rejected():
 
 def test_compare_output_colliding_with_reserved_name_rejected():
     recipe = copy.deepcopy(load_recipe(RECIPE))
-    recipe["output"]["compare_columns"][0]["output"] = "final_parent_id"
-    _reject(recipe, "reserved decision_record output column")
+    recipe["output"]["compare_columns"][0]["output"] = "final_l1_id"
+    _reject(recipe, "a decision_record output column")
 
 
 def test_compare_output_colliding_with_is_unmatched_rejected():
@@ -255,13 +444,13 @@ def test_compare_output_colliding_with_source_column_rejected():
 
 
 def test_reserved_name_as_source_column_rejected():
-    """A source dataset providing final_parent_id shadows the reserved output."""
+    """A source dataset providing final_l1_id shadows the reserved output."""
     recipe = copy.deepcopy(load_recipe(RECIPE))
-    errors, _ = _field_errors(recipe, extra_source_col="final_parent_id")
-    assert any("reserved output column" in e for e in errors)
+    errors, _ = _field_errors(recipe, extra_source_col="final_l1_id")
+    assert any("collides with an existing source column" in e for e in errors)
 
 
-@pytest.mark.parametrize("name", ["final_parent_id", "final_parent_src"])
+@pytest.mark.parametrize("name", ["final_l1_id", "final_l1_id_src"])
 def test_inherit_as_colliding_with_reserved_name_rejected(name):
     """A derived column may not claim a reserved decision_record output name."""
     recipe = copy.deepcopy(load_recipe(RECIPE))
@@ -281,13 +470,13 @@ def test_rollup_write_to_colliding_with_reserved_name_rejected():
     recipe = copy.deepcopy(load_recipe(RECIPE))
     recipe["output"]["final_rollup"] = [{
         "group_key": "l3_fmly_nm", "target": "src_l1_id",
-        "write_to": "final_parent_id",
+        "write_to": "final_l1_id",
     }]
     _reject(recipe, "A derived column cannot take a generated column's name")
 
 
 @pytest.mark.parametrize("role", ["left", "right"])
-@pytest.mark.parametrize("col", ["final_parent_id", "final_parent_src"])
+@pytest.mark.parametrize("col", ["final_l1_id", "final_l1_id_src"])
 def test_compare_operand_naming_reserved_column_rejected(role, col):
     """Operands are read before any generated column exists."""
     recipe = copy.deepcopy(load_recipe(RECIPE))
@@ -309,6 +498,50 @@ def test_compare_operand_naming_own_output_rejected():
     _reject(recipe, "Cross-feature references are not supported")
 
 
+def test_missing_write_to_rejected():
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    del recipe["output"]["decision_record"]["write_to"]
+    _reject(recipe, "write_to is required")
+
+
+@pytest.mark.parametrize("name,needle", [
+    ("derived_l1_id", "a derived (inherit) column"),
+    ("match_step", "a pipeline metadata column"),
+    ("is_unmatched", "the reserved merged-view flag column"),
+    ("revenue_cmp", "a compare_columns output"),
+])
+def test_write_to_collision_rejected(name, needle):
+    """write_to is policed against the same name space as compare outputs."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["decision_record"]["write_to"] = name
+    _reject(recipe, needle)
+
+
+def test_write_to_src_collision_rejected():
+    """The _src companion is claimed too, not just the base name."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["steps"][0]["inherit"].append(
+        {"source": "dst_l1_id", "as": "decided_src"}
+    )
+    recipe["output"]["decision_record"]["write_to"] = "decided"
+    _reject(recipe, "a derived (inherit) column")
+
+
+def test_write_to_colliding_with_source_column_rejected():
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["decision_record"]["write_to"] = "src_l1_id"
+    errors, _ = _field_errors(recipe)
+    assert any("collides with an existing source column" in e for e in errors)
+
+
+def test_invalid_select_rejected():
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["decision_record"]["select"] = "median"
+    with pytest.raises(ValueError) as exc:
+        validate_recipe(recipe)
+    assert "select" in str(exc.value)
+
+
 def test_derived_and_operand_control_validates():
     """Passing control: real derived names and real source operands validate."""
     recipe = copy.deepcopy(load_recipe(RECIPE))
@@ -326,8 +559,8 @@ def test_candidate_naming_compare_output_rejected():
 
 def test_candidate_naming_reserved_column_rejected():
     recipe = copy.deepcopy(load_recipe(RECIPE))
-    recipe["output"]["decision_record"]["candidates"] = ["final_parent_id", "src_l1_id"]
-    _reject(recipe, "cannot be a candidate")
+    recipe["output"]["decision_record"]["candidates"] = ["final_l1_id", "src_l1_id"]
+    _reject(recipe, "Cross-feature references are not supported")
 
 
 def test_unknown_candidate_rejected():
@@ -340,7 +573,7 @@ def test_unknown_candidate_rejected():
 def test_analysis_reference_rejected():
     recipe = copy.deepcopy(load_recipe(RECIPE))
     recipe["output"]["columns"]["analysis"].append(
-        {"field": "final_parent_id", "header": "final_parent_id"}
+        {"field": "final_l1_id", "header": "final_l1_id"}
     )
     _reject(recipe, "matched-view only")
 
@@ -354,7 +587,7 @@ def test_analysis_reference_to_compare_output_rejected():
 
 
 @pytest.mark.parametrize("key,value", [
-    ("decision_record", {"candidates": ["a", "b"]}),
+    ("decision_record", {"candidates": ["a", "b"], "write_to": "d"}),
     ("compare_columns", [{"left": "a", "right": "b", "output": "c"}]),
 ])
 def test_multi_phase_rejected(key, value):

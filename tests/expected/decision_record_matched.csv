@@ -1,4 +1,4 @@
-vnd_id,match_step,final_parent_id,final_parent_src,revenue_cmp,revenue_cmp_inv
-V001,Exact L3,P3100,derived_l1_id,higher,lower
-V002,Exact L3,S1002,src_l1_id,same,same
-V003,Exact L3,,,,
+vnd_id,match_step,final_l1_id,final_l1_id_src,revenue_cmp,revenue_cmp_inv,l1_cmp_alpha,l1_cmp_none
+V001,Exact L3,P3100,derived_l1_id,higher,lower,lower,higher
+V002,Exact L3,S1002,src_l1_id,same,same,,
+V003,Exact L3,,,,,,

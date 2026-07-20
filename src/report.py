@@ -602,56 +602,97 @@ def _blank_as_null(df, col: str) -> pl.Expr:
     return pl.when(trimmed == "").then(None).otherwise(trimmed)
 
 
-def _decision_record_exprs(df, cfg: dict) -> list:
-    """final_parent_id / final_parent_src expressions for an ordered coalesce."""
-    candidates = list(cfg.get("candidates") or [])
-    cleaned = [_blank_as_null(df, c) for c in candidates]
+def _parsed_pair(df, col: str, strip_prefix: str):
+    """(stripped string, Int64) for a column, sharing the tie-breaker helper.
 
+    Whitespace-strip, apply strip_prefix, then parse. Nullity is decided on
+    the value *before* stripping, so a prefix-only value like "AB" stays a
+    present (empty-after-strip) value rather than becoming null.
+    """
+    from normalize import strip_prefix_expr
+
+    present = _blank_as_null(df, col)
+    # "none" disables stripping for these features; the engine has no such
+    # spelling, so the mapping happens here rather than in the shared helper.
+    resolved = "" if strip_prefix == "none" else strip_prefix
+    stripped = strip_prefix_expr(present, resolved).str.strip_chars()
+    return stripped, stripped.cast(pl.Int64, strict=False)
+
+
+def _decision_record_exprs(df, cfg: dict) -> list:
+    """<write_to> / <write_to>_src expressions for one decision_record."""
+    candidates = list(cfg.get("candidates") or [])
+    write_to = cfg["write_to"]
+    select = cfg.get("select", "first")
+    strip_prefix = cfg.get("strip_prefix", "alpha")
+
+    values = [_blank_as_null(df, c) for c in candidates]
+    keys = [_parsed_pair(df, c, strip_prefix)[1] for c in candidates]
+
+    def _first_index(conds):
+        """Index of the earliest candidate satisfying its condition."""
+        expr = pl.lit(None, pl.Int32)
+        for i, cond in reversed(list(enumerate(conds))):
+            expr = pl.when(cond).then(pl.lit(i, pl.Int32)).otherwise(expr)
+        return expr
+
+    populated = [v.is_not_null() for v in values]
+    list_order_idx = _first_index(populated)
+
+    if select in ("min", "max"):
+        # Only populated candidates compete; a candidate that will not parse
+        # cannot win on value. Ties and an all-unparseable row fall back to
+        # list order, matching the tie-breaker's own preference rule.
+        eligible = [
+            pl.when(p).then(k).otherwise(None)
+            for p, k in zip(populated, keys, strict=True)
+        ]
+        target = (
+            pl.min_horizontal(eligible) if select == "min"
+            else pl.max_horizontal(eligible)
+        )
+        best = _first_index([e.is_not_null() & (e == target) for e in eligible])
+        idx = pl.coalesce([best, list_order_idx])
+    else:
+        idx = list_order_idx
+
+    value_expr = pl.lit(None, pl.String)
     src_expr = pl.lit(None, pl.String)
-    for name, expr in reversed(list(zip(candidates, cleaned, strict=True))):
-        src_expr = pl.when(expr.is_not_null()).then(pl.lit(name)).otherwise(src_expr)
+    for i, (name, val) in reversed(list(enumerate(zip(candidates, values, strict=True)))):
+        hit = idx == i
+        value_expr = pl.when(hit).then(val).otherwise(value_expr)
+        src_expr = pl.when(hit).then(pl.lit(name)).otherwise(src_expr)
 
     return [
-        pl.coalesce(cleaned).alias("final_parent_id"),
-        src_expr.alias("final_parent_src"),
+        value_expr.alias(write_to),
+        src_expr.alias(f"{write_to}_src"),
     ]
 
 
-def _strict_numeric(df, col: str, entry_idx: int, role: str) -> pl.Expr:
-    """Column cast to Float64, aborting on any non-null value that fails.
+def _compare_expr(df, entry: dict) -> pl.Expr:
+    """higher/lower/same observation for one compare_columns entry.
 
-    Blank/whitespace-only is null (not an offender). No silent coercion: a
-    value that is present but not numeric is a config error, not a null.
+    Never fails on data. Both sides parsing as integers gives a numeric
+    comparison; anything else falls back to lexicographic on the stripped
+    strings. A null on either side yields an empty cell.
     """
-    if col not in df.columns:
-        return pl.lit(None, pl.Float64)
+    strip_prefix = entry.get("strip_prefix", "alpha")
+    left_s, left_n = _parsed_pair(df, entry["left"], strip_prefix)
+    right_s, right_n = _parsed_pair(df, entry["right"], strip_prefix)
 
-    cleaned = _blank_as_null(df, col)
-    probe = df.select(
-        cleaned.alias("_raw"),
-        cleaned.cast(pl.Float64, strict=False).alias("_num"),
-    ).filter(pl.col("_raw").is_not_null() & pl.col("_num").is_null())
-
-    if probe.height > 0:
-        from recipe import RecipeValidationError
-        raise RecipeValidationError(
-            f'output.compare_columns[{entry_idx}]: {role} column "{col}" holds '
-            f'the non-numeric value "{probe.get_column("_raw")[0]}". '
-            "compare_columns is numeric-only -- remove the column from the "
-            "comparison or clean the data."
+    def _verdict(left, right):
+        return (
+            pl.when(left > right).then(pl.lit("higher"))
+            .when(left < right).then(pl.lit("lower"))
+            .otherwise(pl.lit("same"))
         )
-    return cleaned.cast(pl.Float64, strict=False)
 
-
-def _compare_expr(df, entry: dict, entry_idx: int) -> pl.Expr:
-    """higher/lower/same observation for one compare_columns entry."""
-    left = _strict_numeric(df, entry["left"], entry_idx, "left")
-    right = _strict_numeric(df, entry["right"], entry_idx, "right")
     return (
-        pl.when(left.is_null() | right.is_null()).then(pl.lit(None, pl.String))
-        .when(left > right).then(pl.lit("higher"))
-        .when(left < right).then(pl.lit("lower"))
-        .otherwise(pl.lit("same"))
+        pl.when(left_s.is_null() | right_s.is_null())
+        .then(pl.lit(None, pl.String))
+        .when(left_n.is_not_null() & right_n.is_not_null())
+        .then(_verdict(left_n, right_n))
+        .otherwise(_verdict(left_s, right_s))
         .alias(entry["output"])
     )
 
@@ -671,10 +712,10 @@ def _matched_column_fields(output_cfg: dict) -> set:
 def apply_output_computations(df, output_cfg: dict):
     """Attach decision_record / compare_columns columns to a frame.
 
-    Runs before any artifact is written, on the matched and unmatched frames
-    alike, so the merged view picks both up with no merged-view code: a
-    candidate absent from the unmatched frame is null there and the coalesce
-    falls through to a source-side candidate.
+    Runs on the matched and unmatched frames alike, so the merged view picks
+    both up with no merged-view code: a candidate absent from the unmatched
+    frame is null there and the decision falls through to a source-side
+    candidate.
 
     Computed columns are pruned unless ``output.columns.matched`` names them --
     these features never auto-append a column to an artifact.
@@ -686,10 +727,10 @@ def apply_output_computations(df, output_cfg: dict):
         return df
 
     exprs = []
-    if output_cfg.get("decision_record"):
+    if (output_cfg.get("decision_record") or {}).get("write_to"):
         exprs.extend(_decision_record_exprs(df, output_cfg["decision_record"]))
-    for i, entry in enumerate(output_cfg.get("compare_columns") or []):
-        exprs.append(_compare_expr(df, entry, i))
+    for entry in output_cfg.get("compare_columns") or []:
+        exprs.append(_compare_expr(df, entry))
 
     df = df.with_columns(exprs)
 

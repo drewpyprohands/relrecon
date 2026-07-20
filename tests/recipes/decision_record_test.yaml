@@ -45,6 +45,7 @@ output:
   match_mode: best_match
   decision_record:
     candidates: [derived_l1_id, src_l1_id]
+    write_to: final_l1_id
   compare_columns:
     - left: src_revenue
       right: dst_revenue
@@ -52,20 +53,34 @@ output:
     - left: dst_revenue
       right: src_revenue
       output: revenue_cmp_inv
+    # Same alpha-prefixed pair twice: default strip parses S1001/P3100 as
+    # 1001 vs 3100 (numeric), strip_prefix none compares "S1001" vs "P3100"
+    # lexicographically and flips the verdict.
+    - left: src_l1_id
+      right: derived_l1_id
+      output: l1_cmp_alpha
+    - left: src_l1_id
+      right: derived_l1_id
+      output: l1_cmp_none
+      strip_prefix: none
   columns:
     matched:
       - field: vnd_id
         header: vnd_id
       - field: match_step
         header: match_step
-      - field: final_parent_id
-        header: final_parent_id
-      - field: final_parent_src
-        header: final_parent_src
+      - field: final_l1_id
+        header: final_l1_id
+      - field: final_l1_id_src
+        header: final_l1_id_src
       - field: revenue_cmp
         header: revenue_cmp
       - field: revenue_cmp_inv
         header: revenue_cmp_inv
+      - field: l1_cmp_alpha
+        header: l1_cmp_alpha
+      - field: l1_cmp_none
+        header: l1_cmp_none
     analysis:
       - field: vnd_id
         header: vnd_id

@@ -1,8 +1,8 @@
-name: Decision Record Non-Numeric Test
+name: Decision Record Lexicographic Test
 description: >
-  Issue #93 abort case: compare_columns pointed at a text column. The run
-  must abort naming the column and the offending value, with zero artifacts
-  written.
+  Issue #93 no-abort case: compare_columns pointed at a text column. The run
+  must complete and fall back to a lexicographic comparison on the stripped
+  strings rather than failing on the data.
 
 sources:
   src:
@@ -34,12 +34,15 @@ output:
   matched_unmatched: [merged, separate]
   match_mode: best_match
   compare_columns:
+    # l3_fmly_nm never parses as an integer, so every populated row takes the
+    # lexicographic branch instead of aborting the run.
     - left: l3_fmly_nm
       right: dst_revenue
-      output: bad_cmp
+      output: text_cmp
+      strip_prefix: none
   columns:
     matched:
       - field: vnd_id
         header: vnd_id
-      - field: bad_cmp
-        header: bad_cmp
+      - field: text_cmp
+        header: text_cmp

@@ -710,14 +710,33 @@
               "items": {
                 "type": "string"
               },
-              "description": "Ordered candidate columns. The first non-null (null = polars null or empty/whitespace-only string) value wins."
+              "description": "Ordered candidate columns (2+). Null = polars null or empty/whitespace-only string."
+            },
+            "write_to": {
+              "type": "string",
+              "description": "Name of the decided column. Also emits <write_to>_src, the field name of the winning candidate."
+            },
+            "select": {
+              "type": "string",
+              "enum": [
+                "first",
+                "min",
+                "max"
+              ],
+              "default": "first",
+              "description": "Winner among populated candidates: 'first' (list order), or 'min'/'max' by parsed integer value. Ties and unparseable values fall back to list order."
+            },
+            "strip_prefix": {
+              "type": "string",
+              "default": "alpha",
+              "description": "Prefix removed before min/max parsing: 'alpha' (leading letters, default), an anchored regex, or 'none'. Same semantics as tie_breaker.strip_prefix."
             }
           },
-          "description": "Presentation-layer ordered coalesce over candidate columns (single-phase only). Emits final_parent_id (the winning value) and final_parent_src (the candidate field name that supplied it). Both columns appear in an artifact only when listed in output.columns.matched."
+          "description": "Presentation-layer decision over candidate columns (single-phase only). Emits <write_to> and <write_to>_src. Columns appear in an artifact only when listed in output.columns.matched."
         },
         "compare_columns": {
           "type": "array",
-          "description": "Presentation-layer numeric comparisons (single-phase only). Each entry emits a column of literal 'higher'/'lower'/'same', left-relative. Any null operand yields an empty cell. Columns appear in an artifact only when listed in output.columns.matched.",
+          "description": "Presentation-layer comparisons (single-phase only). Each entry emits a column of literal 'higher'/'lower'/'same', left-relative. Both sides parse as integers -> numeric compare, otherwise lexicographic on the stripped strings. Any null operand yields an empty cell. Never aborts on data values. Columns appear in an artifact only when listed in output.columns.matched.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -738,6 +757,11 @@
               "output": {
                 "type": "string",
                 "description": "Name of the emitted observation column."
+              },
+              "strip_prefix": {
+                "type": "string",
+                "default": "alpha",
+                "description": "Prefix removed from both sides before parsing: 'alpha' (leading letters, default), an anchored regex, or 'none'. Same semantics as tie_breaker.strip_prefix."
               }
             }
           }
