@@ -26,3 +26,6 @@ severity = "medium"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repo root on sys.path so `src.*` imports resolve under bare
+# `pytest` too, not just `python -m pytest`.
+pythonpath = ["."]
