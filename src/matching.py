@@ -17,7 +17,7 @@ from rapidfuzz import fuzz as rfuzz
 from rapidfuzz import process as rprocess
 
 from address import score_address_multi_tier
-from normalize import clean, normalized
+from normalize import clean, normalized, strip_prefix_expr
 
 # Max source rows per cdist chunk. Controls peak memory:
 # chunk_size x dest_rows x 4 bytes (float32).
@@ -339,22 +339,18 @@ def _tb_sort_key_expr(col_name: str, tie_breaker: dict) -> pl.Expr:
         Polars expression aliased as '_tb_sort_key'.
     """
     strip_prefix = tie_breaker.get("strip_prefix", "")
+    base = strip_prefix_expr(pl.col(col_name).cast(pl.String), strip_prefix)
     if strip_prefix == "alpha":
         # Strip leading letters, parse remainder as integer
         return (
-            pl.col(col_name).cast(pl.String)
-            .str.replace(r"^[A-Za-z]+", "")
+            base
             .str.strip_chars()
             .cast(pl.Int64, strict=False)
             .fill_null(2**63 - 1)
             .alias("_tb_sort_key")
         )
     else:
-        expr = pl.col(col_name).cast(pl.String)
-        if strip_prefix:
-            # Strip prefix from start of string only (anchored)
-            expr = expr.str.replace(r"^" + strip_prefix, "")
-        return expr.alias("_tb_sort_key")
+        return base.alias("_tb_sort_key")
 
 
 def _presort_by_tie_breaker(df: pl.DataFrame, tie_breaker: dict,

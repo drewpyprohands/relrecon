@@ -376,6 +376,164 @@ def validate_recipe(recipe: dict) -> list[str]:
         for c in cols:
             reserved[c] = i
 
+    # decision_record / compare_columns: presentation-layer output features
+    # (Issue #93). Both are global-output-only, like matched_unmatched.
+    if is_multi_phase:
+        blocks = [("output", recipe.get("output", {}) or {})]
+        for i, p in enumerate(recipe.get("phases", [])):
+            blocks.append((p.get("name", f"Phase {i + 1}"), p.get("output", {}) or {}))
+        for label, block in blocks:
+            for key in ("decision_record", "compare_columns"):
+                if key in block:
+                    critical.append(
+                        f"{label}: output.{key} is not supported in multi-phase "
+                        "recipes. It is a global presentation-layer pass; use a "
+                        "single-phase recipe."
+                    )
+
+    out_cfg = recipe.get("output", {}) or {}
+    decision_record = out_cfg.get("decision_record")
+    compare_entries = out_cfg.get("compare_columns") or []
+    compare_names = compare_output_names(out_cfg)
+    # Names no compare output may take. is_unmatched is the merged flag column,
+    # "unmatched" the merged match_step sentinel.
+    taken: dict[str, str] = {
+        "is_unmatched": "the reserved merged-view flag column",
+        "unmatched": "the reserved merged-view match_step sentinel",
+    }
+    for c in _STATIC_DERIVED_COLUMNS:
+        taken[c] = "a pipeline metadata column"
+    # Every column this recipe's derived paths produce, with where it came
+    # from -- used both to police compare output names and, in reverse, to
+    # stop a derived column from claiming a generated name.
+    derived_sources: list[tuple[str, str]] = []
+    for step in all_steps:
+        for inh in step.get("inherit", []):
+            if "as" in inh:
+                derived_sources.append(
+                    (inh["as"], f'step "{step.get("name", "?")}" inherit.as')
+                )
+                taken[inh["as"]] = "a derived (inherit) column"
+    for i, bucket in enumerate(rollup_buckets):
+        if isinstance(bucket, dict):
+            wt = bucket.get("write_to", "rolled_supplier_id")
+            derived_sources.append((wt, f"output.final_rollup[{i}].write_to"))
+            derived_sources.append(
+                (f"{wt}_changed", f"output.final_rollup[{i}] audit flag")
+            )
+            taken[wt] = "a final_rollup output column"
+            taken[f"{wt}_changed"] = "a final_rollup audit column"
+    dr_names = decision_record_columns(out_cfg)
+    # Capture what each write_to name already meant before it is claimed --
+    # overwriting first would hide the very collision we are looking for.
+    dr_clashes = {n: taken[n] for n in dr_names if n in taken}
+    for c in dr_names:
+        taken[c] = "a decision_record output column"
+
+    # Columns the presentation layer generates. Nothing else may produce them
+    # and nothing may read them back as an input.
+    generated: dict[str, str] = {
+        c: "a compare_columns output column" for c in compare_names
+    }
+    for c in dr_names:
+        generated[c] = "a decision_record output column"
+
+    for name, where in derived_sources:
+        if name in generated:
+            critical.append(
+                f'{where}: "{name}" is {generated[name]}. A derived column '
+                "cannot take a generated column's name -- the computation "
+                "would overwrite it at output time. Rename it."
+            )
+
+    seen_compare: dict[str, int] = {}
+    for i, entry in enumerate(compare_entries):
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("output")
+        if not name:
+            continue
+        if name in taken:
+            critical.append(
+                f'output.compare_columns[{i}]: output "{name}" collides with '
+                f"{taken[name]}. Choose a different output name."
+            )
+        if name in seen_compare:
+            critical.append(
+                f'output.compare_columns: entries {seen_compare[name]} and {i} '
+                f'both emit column "{name}". Each output name must be unique.'
+            )
+        seen_compare[name] = i
+
+    # Operands are read before any generated column exists, so naming one
+    # (including this entry's own output) is a cross-feature reference.
+    for i, entry in enumerate(compare_entries):
+        if not isinstance(entry, dict):
+            continue
+        for role in ("left", "right"):
+            col = entry.get(role)
+            if col in generated:
+                critical.append(
+                    f'output.compare_columns[{i}]: {role} "{col}" names '
+                    f"{generated[col]}. Cross-feature references are not "
+                    "supported -- use a source or derived column."
+                )
+
+    if decision_record is not None:
+        if not decision_record.get("write_to"):
+            critical.append(
+                "output.decision_record: write_to is required. It names the "
+                "decided column and its <write_to>_src companion."
+            )
+        candidates = decision_record.get("candidates") or []
+        if len(candidates) < 2:
+            critical.append(
+                f"output.decision_record.candidates needs at least 2 entries "
+                f"(got {len(candidates)}). A coalesce over one column is a "
+                "rename, not a decision."
+            )
+        select = decision_record.get("select", "first")
+        if select not in ("first", "min", "max"):
+            critical.append(
+                f'output.decision_record: select "{select}" is not one of '
+                "first, min, max."
+            )
+        for c in candidates:
+            if c in generated:
+                critical.append(
+                    f'output.decision_record: candidate "{c}" names '
+                    f"{generated[c]}. Cross-feature references are not "
+                    "supported -- use a source or derived column."
+                )
+        # write_to collisions are policed by the same map as compare outputs.
+        for name in dr_names:
+            clash = dr_clashes.get(name)
+            if clash:
+                critical.append(
+                    f'output.decision_record: write_to emits "{name}", which '
+                    f"collides with {clash}. Choose a different write_to."
+                )
+            if name in compare_names:
+                critical.append(
+                    f'output.decision_record: write_to emits "{name}", which '
+                    "collides with a compare_columns output. Choose a "
+                    "different write_to."
+                )
+
+    # The computed columns are matched-side only: they are evaluated against
+    # matched/merged rows, so naming them on the analysis side is meaningless.
+    computed = set(output_computed_columns(out_cfg))
+    for i, entry in enumerate((out_cfg.get("columns") or {}).get("analysis") or []):
+        if not isinstance(entry, dict):
+            continue
+        field = entry.get("field")
+        if field in computed:
+            critical.append(
+                f'output.columns.analysis[{i}]: "{field}" is a decision_record '
+                "or compare_columns output column. These are matched-view only "
+                "-- reference them from output.columns.matched instead."
+            )
+
     source_pops = {step["source"] for step in all_steps if "source" in step}
     dest_pops = {step["destination"] for step in all_steps if "destination" in step}
 
@@ -766,6 +924,41 @@ def validate_fields(
                             f"not found in source data"
                         )
 
+    # decision_record / compare_columns: data-aware half of the Issue #93
+    # rules. Name collisions against actual source columns and candidate
+    # existence can only be checked once the sources are loaded.
+    out_cfg = recipe.get("output", {}) or {}
+    for name in decision_record_columns(out_cfg):
+        if name in all_source_cols:
+            errors.append(
+                f'output.decision_record: write_to emits "{name}", which '
+                "collides with an existing source column. Choose a different "
+                "write_to."
+            )
+    for i, entry in enumerate(out_cfg.get("compare_columns") or []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("output") in all_source_cols:
+            errors.append(
+                f'output.compare_columns[{i}]: output "{entry["output"]}" '
+                "collides with an existing source column. Choose a different "
+                "output name."
+            )
+        for role in ("left", "right"):
+            col = entry.get(role)
+            if col and "_dst" not in col and col not in (all_source_cols | known_derived):
+                errors.append(
+                    f'output.compare_columns[{i}]: {role} "{col}" not found in '
+                    f"source data or known derived columns"
+                )
+
+    for c in (out_cfg.get("decision_record") or {}).get("candidates") or []:
+        if "_dst" not in c and c not in (all_source_cols | known_derived):
+            errors.append(
+                f'output.decision_record: candidate "{c}" not found in source '
+                f"data or known derived columns"
+            )
+
     # final_rollup: group_key/target must resolve to a matched-output column
     available = all_source_cols | known_derived
     for i, bucket in enumerate(recipe.get("output", {}).get("final_rollup", []) or []):
@@ -962,6 +1155,29 @@ def resolve_matched_unmatched(output_cfg: dict) -> list[str] | None:
     return None
 
 
+def decision_record_columns(output_cfg: dict) -> list[str]:
+    """The two columns output.decision_record emits, per its write_to."""
+    cfg = output_cfg.get("decision_record") or {}
+    write_to = cfg.get("write_to")
+    if not write_to:
+        return []
+    return [write_to, f"{write_to}_src"]
+
+
+def compare_output_names(output_cfg: dict) -> list[str]:
+    """Ordered output.compare_columns[].output names ([] when unconfigured)."""
+    return [
+        e["output"]
+        for e in (output_cfg.get("compare_columns") or [])
+        if isinstance(e, dict) and e.get("output")
+    ]
+
+
+def output_computed_columns(output_cfg: dict) -> list[str]:
+    """Every column the presentation-layer computations emit, in emit order."""
+    return decision_record_columns(output_cfg) + compare_output_names(output_cfg)
+
+
 # Static metadata columns the pipeline always creates in matched output.
 _STATIC_DERIVED_COLUMNS = {
     "match_step", "match_tier", "name_score",
@@ -987,6 +1203,7 @@ def known_derived_columns(recipe: dict, include_rollup: bool = True) -> set[str]
                 write_to = bucket.get("write_to", "rolled_supplier_id")
                 known.add(write_to)
                 known.add(f"{write_to}_changed")
+    known.update(output_computed_columns(recipe.get("output", {}) or {}))
     return known
 
 

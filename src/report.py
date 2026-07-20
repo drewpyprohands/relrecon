@@ -533,6 +533,12 @@ def write_unmatched_export(unmatched_df, output_cfg: dict, path: str, fmt: str):
     """
     if unmatched_df is None:
         return None
+    from recipe import output_computed_columns
+    # decision_record/compare columns are matched-view only (they may ride on
+    # the unmatched frame purely to reach the merged view).
+    stowaways = [c for c in output_computed_columns(output_cfg) if c in unmatched_df.columns]
+    if stowaways:
+        unmatched_df = unmatched_df.drop(stowaways)
     unmatched_df = _ensure_reason_columns(unmatched_df)
     export_df = apply_column_mapping(unmatched_df, output_cfg, key="analysis")
     write_raw_data(export_df, path, fmt)
@@ -595,6 +601,157 @@ def build_merged_frame(matched_df, unmatched_df, output_cfg: dict,
         return matched_side
     unmatched_side = _side(unmatched_df, True)
     return pl.concat([matched_side, unmatched_side], how="vertical_relaxed")
+
+
+# ---------------------------------------------------------------------------
+# Presentation-layer computed columns (Issue #93)
+# ---------------------------------------------------------------------------
+
+def _blank_as_null(df, col: str) -> pl.Expr:
+    """Column as trimmed String, with absent/empty/whitespace-only as null."""
+    if col not in df.columns:
+        return pl.lit(None, pl.String)
+    trimmed = pl.col(col).cast(pl.String).str.strip_chars()
+    return pl.when(trimmed == "").then(None).otherwise(trimmed)
+
+
+def _parsed_pair(df, col: str, strip_prefix: str):
+    """(stripped string, Float64) for a column, sharing the tie-breaker helper.
+
+    Whitespace-strip, apply strip_prefix, then parse. Float64 (not the
+    engine's Int64) so decimal identifiers and amounts compare numerically;
+    only values that fail the float parse fall back to text. Nullity is
+    decided on the value *before* stripping, so a prefix-only value like
+    "AB" stays a present (empty-after-strip) value rather than becoming null.
+    """
+    from normalize import strip_prefix_expr
+
+    present = _blank_as_null(df, col)
+    # "none" disables stripping for these features; the engine has no such
+    # spelling, so the mapping happens here rather than in the shared helper.
+    resolved = "" if strip_prefix == "none" else strip_prefix
+    stripped = strip_prefix_expr(present, resolved).str.strip_chars()
+    return stripped, stripped.cast(pl.Float64, strict=False)
+
+
+def _decision_record_exprs(df, cfg: dict) -> list:
+    """<write_to> / <write_to>_src expressions for one decision_record."""
+    candidates = list(cfg.get("candidates") or [])
+    write_to = cfg["write_to"]
+    select = cfg.get("select", "first")
+    strip_prefix = cfg.get("strip_prefix", "alpha")
+
+    values = [_blank_as_null(df, c) for c in candidates]
+    keys = [_parsed_pair(df, c, strip_prefix)[1] for c in candidates]
+
+    def _first_index(conds):
+        """Index of the earliest candidate satisfying its condition."""
+        expr = pl.lit(None, pl.Int32)
+        for i, cond in reversed(list(enumerate(conds))):
+            expr = pl.when(cond).then(pl.lit(i, pl.Int32)).otherwise(expr)
+        return expr
+
+    populated = [v.is_not_null() for v in values]
+    list_order_idx = _first_index(populated)
+
+    if select in ("min", "max"):
+        # Only populated candidates compete; a candidate that will not parse
+        # cannot win on value. Ties and an all-unparseable row fall back to
+        # list order, matching the tie-breaker's own preference rule.
+        eligible = [
+            pl.when(p).then(k).otherwise(None)
+            for p, k in zip(populated, keys, strict=True)
+        ]
+        target = (
+            pl.min_horizontal(eligible) if select == "min"
+            else pl.max_horizontal(eligible)
+        )
+        best = _first_index([e.is_not_null() & (e == target) for e in eligible])
+        idx = pl.coalesce([best, list_order_idx])
+    else:
+        idx = list_order_idx
+
+    value_expr = pl.lit(None, pl.String)
+    src_expr = pl.lit(None, pl.String)
+    for i, (name, val) in reversed(list(enumerate(zip(candidates, values, strict=True)))):
+        hit = idx == i
+        value_expr = pl.when(hit).then(val).otherwise(value_expr)
+        src_expr = pl.when(hit).then(pl.lit(name)).otherwise(src_expr)
+
+    return [
+        value_expr.alias(write_to),
+        src_expr.alias(f"{write_to}_src"),
+    ]
+
+
+def _compare_expr(df, entry: dict) -> pl.Expr:
+    """higher/lower/same observation for one compare_columns entry.
+
+    Never fails on data. Both sides parsing as integers gives a numeric
+    comparison; anything else falls back to lexicographic on the stripped
+    strings. A null on either side yields an empty cell.
+    """
+    strip_prefix = entry.get("strip_prefix", "alpha")
+    left_s, left_n = _parsed_pair(df, entry["left"], strip_prefix)
+    right_s, right_n = _parsed_pair(df, entry["right"], strip_prefix)
+
+    def _verdict(left, right):
+        return (
+            pl.when(left > right).then(pl.lit("higher"))
+            .when(left < right).then(pl.lit("lower"))
+            .otherwise(pl.lit("same"))
+        )
+
+    return (
+        pl.when(left_s.is_null() | right_s.is_null())
+        .then(pl.lit(None, pl.String))
+        .when(left_n.is_not_null() & right_n.is_not_null())
+        .then(_verdict(left_n, right_n))
+        .otherwise(_verdict(left_s, right_s))
+        .alias(entry["output"])
+    )
+
+
+def _matched_column_fields(output_cfg: dict) -> set:
+    """Field names referenced by output.columns.matched."""
+    referenced = set()
+    for entry in (output_cfg.get("columns") or {}).get("matched") or []:
+        if not isinstance(entry, dict):
+            continue
+        if "field" in entry:
+            referenced.add(entry["field"])
+        referenced.update(entry.get("fields") or [])
+    return referenced
+
+
+def apply_output_computations(df, output_cfg: dict):
+    """Attach decision_record / compare_columns columns to a frame.
+
+    Runs on the matched and unmatched frames alike, so the merged view picks
+    both up with no merged-view code: a candidate absent from the unmatched
+    frame is null there and the decision falls through to a source-side
+    candidate.
+
+    Computed columns are pruned unless ``output.columns.matched`` names them --
+    these features never auto-append a column to an artifact.
+    """
+    from recipe import output_computed_columns
+
+    computed = output_computed_columns(output_cfg)
+    if df is None or not computed or df.height == 0:
+        return df
+
+    exprs = []
+    if (output_cfg.get("decision_record") or {}).get("write_to"):
+        exprs.extend(_decision_record_exprs(df, output_cfg["decision_record"]))
+    for entry in output_cfg.get("compare_columns") or []:
+        exprs.append(_compare_expr(df, entry))
+
+    df = df.with_columns(exprs)
+
+    referenced = _matched_column_fields(output_cfg)
+    drop = [c for c in computed if c not in referenced]
+    return df.drop(drop) if drop else df
 
 
 def enrich_join(source_df, matched_df, enrich_key: str):

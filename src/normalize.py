@@ -309,3 +309,23 @@ def apply_tier(value: str, tier: str, aliases: Optional[dict | list] = None,
         return normalized(value, aliases, stopwords)
     else:
         raise ValueError(f"Unknown tier: {tier}. Must be 'raw', 'clean', or 'normalized'.")
+
+
+# ---------------------------------------------------------------------------
+# Shared identifier-prefix stripping (tie-breaker parity)
+# ---------------------------------------------------------------------------
+
+def strip_prefix_expr(expr, strip_prefix: str):
+    """Remove ``strip_prefix`` from the head of a String expression.
+
+    One source of truth for the tie-breaker sort key, decision_record
+    min/max parsing, and compare_columns. ``alpha`` strips leading letters;
+    any other non-empty value is an anchored regex; falsy leaves the value
+    alone. Callers own the surrounding trim/cast so each keeps its own
+    semantics.
+    """
+    if strip_prefix == "alpha":
+        return expr.str.replace(r"^[A-Za-z]+", "")
+    if strip_prefix:
+        return expr.str.replace(r"^" + strip_prefix, "")
+    return expr
