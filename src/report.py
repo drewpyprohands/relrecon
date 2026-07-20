@@ -603,11 +603,13 @@ def _blank_as_null(df, col: str) -> pl.Expr:
 
 
 def _parsed_pair(df, col: str, strip_prefix: str):
-    """(stripped string, Int64) for a column, sharing the tie-breaker helper.
+    """(stripped string, Float64) for a column, sharing the tie-breaker helper.
 
-    Whitespace-strip, apply strip_prefix, then parse. Nullity is decided on
-    the value *before* stripping, so a prefix-only value like "AB" stays a
-    present (empty-after-strip) value rather than becoming null.
+    Whitespace-strip, apply strip_prefix, then parse. Float64 (not the
+    engine's Int64) so decimal identifiers and amounts compare numerically;
+    only values that fail the float parse fall back to text. Nullity is
+    decided on the value *before* stripping, so a prefix-only value like
+    "AB" stays a present (empty-after-strip) value rather than becoming null.
     """
     from normalize import strip_prefix_expr
 
@@ -616,7 +618,7 @@ def _parsed_pair(df, col: str, strip_prefix: str):
     # spelling, so the mapping happens here rather than in the shared helper.
     resolved = "" if strip_prefix == "none" else strip_prefix
     stripped = strip_prefix_expr(present, resolved).str.strip_chars()
-    return stripped, stripped.cast(pl.Int64, strict=False)
+    return stripped, stripped.cast(pl.Float64, strict=False)
 
 
 def _decision_record_exprs(df, cfg: dict) -> list:

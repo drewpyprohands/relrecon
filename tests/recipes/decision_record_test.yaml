@@ -12,6 +12,11 @@ description: >
   all six input conditions -- V001 higher/lower, V002 same/same,
   V003 left-null/right-null, V004 both-null/both-null.
 
+  Float parsing: V005 (9.5 vs 10.5) compares numerically, not as text;
+  V006 (2.50 vs 2.5) reads same; V007 (9.5 vs "12-34") has one unparseable
+  side and falls back to lexicographic, where "9.5" sorts above "12-34"
+  even though 9.5 is the smaller number.
+
 sources:
   src:
     file: dr_source.csv

@@ -164,10 +164,41 @@ def test_numeric_beats_lexicographic_when_both_parse():
     assert _cmp(df, left="l", right="r", strip_prefix="none") == ["lower"]
 
 
-def test_decimals_do_not_parse_as_int64():
-    """Int64 parsing (tie-breaker parity) sends decimals to the text branch."""
-    df = pl.DataFrame({"l": ["9.5"], "r": ["10.5"]})
+@pytest.mark.parametrize("left,right,expected", [
+    ("9.5", "10.5", "lower"),     # numeric, not text ("9" > "1" would be higher)
+    ("2.50", "2.5", "same"),      # equal as floats, unequal as text
+    ("-1.5", "0", "lower"),
+])
+def test_decimals_compare_numerically(left, right, expected):
+    """Float64 parsing: decimal values take the numeric branch."""
+    df = pl.DataFrame({"l": [left], "r": [right]})
+    assert _cmp(df, left="l", right="r") == [expected]
+
+
+def test_decimal_vs_unparseable_is_lexicographic():
+    """Only one side parses, so the text branch decides."""
+    df = pl.DataFrame({"l": ["9.5"], "r": ["12-34"]})
     assert _cmp(df, left="l", right="r") == ["higher"]
+
+
+@pytest.mark.parametrize("row,revenue_cmp,revenue_cmp_inv", [
+    ("V005", "lower", "higher"),   # 9.5 vs 10.5 -> numeric
+    ("V006", "same", "same"),      # 2.50 vs 2.5 -> equal as floats
+    ("V007", "higher", "lower"),   # 9.5 vs "12-34" -> lexicographic
+])
+def test_decimal_fixture_rows(tmp_path, row, revenue_cmp, revenue_cmp_inv):
+    """The decimal rows of the compare fixture, from the written artifact."""
+    _run(load_recipe(RECIPE), tmp_path)
+    df = pl.read_csv(tmp_path / "data.csv")
+    got = df.filter(pl.col("vnd_id") == row).to_dicts()[0]
+    assert got["revenue_cmp"] == revenue_cmp
+    assert got["revenue_cmp_inv"] == revenue_cmp_inv
+
+
+def test_select_min_uses_float_parsing():
+    """decision_record min/max parses floats too, not just integers."""
+    df = pl.DataFrame({"a": ["10.5"], "b": ["9.5"]})
+    assert _decide(df, ["a", "b"], select="min") == (["9.5"], ["b"])
 
 
 def test_alpha_strip_default_vs_none():
@@ -210,7 +241,7 @@ def test_lexicographic_recipe_runs_and_writes(tmp_path):
     rows = (tmp_path / "data.csv").read_text().splitlines()
     assert rows[0] == "vnd_id,text_cmp"
     # Names sort above the revenue digits, so every populated row is 'higher'.
-    assert [r.split(",")[1] for r in rows[1:]] == ["higher", "higher", "higher"]
+    assert [r.split(",")[1] for r in rows[1:]] == ["higher"] * 6
 
 
 # ---------------------------------------------------------------------------
