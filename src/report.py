@@ -38,6 +38,11 @@ SCORE_LOW = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="sol
 
 ANALYSIS_HEADER_FILL = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
 
+# compare_columns observations. Deliberately inverted against the score
+# banding above: for an id comparison, "higher" is the worse outcome.
+CMP_HIGHER = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # Light red
+CMP_LOWER = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")   # Light green
+
 
 # ---------------------------------------------------------------------------
 # Column definitions
@@ -103,12 +108,17 @@ def _write_headers(ws, columns: list, header_fill=HEADER_FILL):
         cell.border = THIN_BORDER
 
 
-def _write_data(ws, df: pl.DataFrame, columns: list, start_row: int = 2):
+def _write_data(ws, df: pl.DataFrame, columns: list, start_row: int = 2,
+                compare_cols: set | None = None):
     """Write DataFrame rows to worksheet, matching columns by name.
 
     Uses iter_rows. Required for cell-by-cell openpyxl writes.
     Not a data processing loop (ADR-001 prohibits iterrows for data ops,
     not for output serialization).
+
+    ``compare_cols`` names the compare_columns observation columns (by field
+    and by header, since the two write paths differ) so they get their own
+    higher/lower banding.
     """
     available_cols = set(df.columns)
 
@@ -138,6 +148,15 @@ def _write_data(ws, df: pl.DataFrame, columns: list, start_row: int = 2):
                             cell.fill = SCORE_LOW
                     except (ValueError, TypeError):
                         pass
+
+                # compare_columns observations: higher is worse, lower is
+                # better. 'same' and empty cells stay unfilled.
+                if compare_cols and col_name in compare_cols and value is not None:
+                    text = str(value).lower()
+                    if "higher" in text:
+                        cell.fill = CMP_HIGHER
+                    elif "lower" in text:
+                        cell.fill = CMP_LOWER
 
 
 def _auto_width(ws, columns: list, min_width: int = 10, max_width: int = 40):
@@ -250,6 +269,31 @@ def _build_columns_from_recipe(recipe_columns: list, df: pl.DataFrame) -> list:
     return resolved
 
 
+def _compare_format_columns(recipe: Optional[dict]) -> set:
+    """Identifiers of compare_columns outputs, as field names and as headers.
+
+    The merged and non-merged Matched-tab paths label columns differently
+    (header vs field), so both spellings are collected and the banding works
+    either way.
+    """
+    if not recipe:
+        return set()
+    from recipe import compare_output_names
+
+    output_cfg = recipe.get("output", {}) or {}
+    fields = set(compare_output_names(output_cfg))
+    if not fields:
+        return set()
+
+    idents = set(fields)
+    for entry in (output_cfg.get("columns") or {}).get("matched") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("field") in fields and entry.get("header"):
+            idents.add(entry["header"])
+    return idents
+
+
 def _known_derived(recipe: Optional[dict]) -> set:
     """Derived/metadata column names the recipe may produce (empty if none)."""
     if not recipe:
@@ -338,7 +382,8 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
             write_df = matched_df
 
         _write_headers(ws_main, main_cols)
-        _write_data(ws_main, write_df, main_cols)
+        _write_data(ws_main, write_df, main_cols,
+                    compare_cols=_compare_format_columns(recipe))
         _auto_width(ws_main, main_cols)
 
         # Freeze top row
