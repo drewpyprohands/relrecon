@@ -261,6 +261,63 @@ def test_reserved_name_as_source_column_rejected():
     assert any("reserved output column" in e for e in errors)
 
 
+@pytest.mark.parametrize("name", ["final_parent_id", "final_parent_src"])
+def test_inherit_as_colliding_with_reserved_name_rejected(name):
+    """A derived column may not claim a reserved decision_record output name."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["steps"][0]["inherit"][0]["as"] = name
+    _reject(recipe, "A derived column cannot take a generated column's name")
+
+
+def test_inherit_as_colliding_with_compare_output_rejected():
+    """Same rule against a configured compare output name."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["steps"][0]["inherit"][0]["as"] = "revenue_cmp"
+    _reject(recipe, "a compare_columns output column")
+
+
+def test_rollup_write_to_colliding_with_reserved_name_rejected():
+    """final_rollup is a derived-column path too."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["final_rollup"] = [{
+        "group_key": "l3_fmly_nm", "target": "src_l1_id",
+        "write_to": "final_parent_id",
+    }]
+    _reject(recipe, "A derived column cannot take a generated column's name")
+
+
+@pytest.mark.parametrize("role", ["left", "right"])
+@pytest.mark.parametrize("col", ["final_parent_id", "final_parent_src"])
+def test_compare_operand_naming_reserved_column_rejected(role, col):
+    """Operands are read before any generated column exists."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["compare_columns"][0][role] = col
+    _reject(recipe, "Cross-feature references are not supported")
+
+
+@pytest.mark.parametrize("role", ["left", "right"])
+def test_compare_operand_naming_compare_output_rejected(role):
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["compare_columns"][0][role] = "revenue_cmp_inv"
+    _reject(recipe, "Cross-feature references are not supported")
+
+
+def test_compare_operand_naming_own_output_rejected():
+    """An entry reading its own output back is the degenerate cross-reference."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    recipe["output"]["compare_columns"][0]["left"] = "revenue_cmp"
+    _reject(recipe, "Cross-feature references are not supported")
+
+
+def test_derived_and_operand_control_validates():
+    """Passing control: real derived names and real source operands validate."""
+    recipe = copy.deepcopy(load_recipe(RECIPE))
+    assert recipe["steps"][0]["inherit"][0]["as"] == "derived_l1_id"
+    assert recipe["output"]["compare_columns"][0]["left"] == "src_revenue"
+    assert recipe["output"]["compare_columns"][0]["right"] == "dst_revenue"
+    validate_recipe(recipe)
+
+
 def test_candidate_naming_compare_output_rejected():
     recipe = copy.deepcopy(load_recipe(RECIPE))
     recipe["output"]["decision_record"]["candidates"] = ["revenue_cmp", "src_l1_id"]

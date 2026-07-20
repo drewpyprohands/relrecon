@@ -403,17 +403,46 @@ def validate_recipe(recipe: dict) -> list[str]:
     }
     for c in _STATIC_DERIVED_COLUMNS:
         taken[c] = "a pipeline metadata column"
-    for c in DECISION_RECORD_COLUMNS:
-        taken[c] = "a reserved decision_record output column"
+    # Every column this recipe's derived paths produce, with where it came
+    # from -- used both to police compare output names and, in reverse, to
+    # stop a derived column from claiming a generated name.
+    derived_sources: list[tuple[str, str]] = []
     for step in all_steps:
         for inh in step.get("inherit", []):
             if "as" in inh:
+                derived_sources.append(
+                    (inh["as"], f'step "{step.get("name", "?")}" inherit.as')
+                )
                 taken[inh["as"]] = "a derived (inherit) column"
-    for bucket in rollup_buckets:
+    for i, bucket in enumerate(rollup_buckets):
         if isinstance(bucket, dict):
             wt = bucket.get("write_to", "rolled_supplier_id")
+            derived_sources.append((wt, f"output.final_rollup[{i}].write_to"))
+            derived_sources.append(
+                (f"{wt}_changed", f"output.final_rollup[{i}] audit flag")
+            )
             taken[wt] = "a final_rollup output column"
             taken[f"{wt}_changed"] = "a final_rollup audit column"
+    # Reserved names win the description: applied after the derived paths so a
+    # collision reports the reserved name rather than the shadowing column.
+    for c in DECISION_RECORD_COLUMNS:
+        taken[c] = "a reserved decision_record output column"
+
+    # Columns the presentation layer generates. Nothing else may produce them
+    # and nothing may read them back as an input.
+    generated: dict[str, str] = {
+        c: "a compare_columns output column" for c in compare_names
+    }
+    for c in DECISION_RECORD_COLUMNS:
+        generated[c] = "a reserved decision_record output column"
+
+    for name, where in derived_sources:
+        if name in generated:
+            critical.append(
+                f'{where}: "{name}" is {generated[name]}. A derived column '
+                "cannot take a generated column's name -- the computation "
+                "would overwrite it at output time. Rename it."
+            )
 
     seen_compare: dict[str, int] = {}
     for i, entry in enumerate(compare_entries):
@@ -433,6 +462,20 @@ def validate_recipe(recipe: dict) -> list[str]:
                 f'both emit column "{name}". Each output name must be unique.'
             )
         seen_compare[name] = i
+
+    # Operands are read before any generated column exists, so naming one
+    # (including this entry's own output) is a cross-feature reference.
+    for i, entry in enumerate(compare_entries):
+        if not isinstance(entry, dict):
+            continue
+        for role in ("left", "right"):
+            col = entry.get(role)
+            if col in generated:
+                critical.append(
+                    f'output.compare_columns[{i}]: {role} "{col}" names '
+                    f"{generated[col]}. Cross-feature references are not "
+                    "supported -- use a source or derived column."
+                )
 
     if decision_record is not None:
         candidates = decision_record.get("candidates") or []
