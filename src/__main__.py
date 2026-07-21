@@ -209,7 +209,7 @@ def _write_output(
             report_path = generate_report(
                 matched_df, unmatched_df, fmt_path,
                 stats=stats, recipe=recipe, recipe_file=recipe_file,
-                merged=emit_merged,
+                merged=emit_merged, base_dir=base_dir,
             )
             print(f"Report saved: {report_path} ({time.time() - t_report:.2f}s)")
             continue
@@ -255,7 +255,7 @@ def _write_output(
             generate_report(
                 matched_df, unmatched_df, report_path,
                 stats=stats, recipe=recipe, recipe_file=recipe_file,
-                merged=emit_merged,
+                merged=emit_merged, base_dir=base_dir,
             )
             print(f"Report saved: {report_path}")
         except Exception as exc:
@@ -341,6 +341,7 @@ def _write_phase_output(
     phase_unmatched_df=None,
     source_df=None,
     source_key: str | None = None,
+    base_dir: str = ".",
 ):
     """Write output files for a single phase in a multi-phase pipeline."""
     from recipe import resolve_summary_modes
@@ -432,7 +433,7 @@ def _write_phase_output(
             generate_report(
                 phase_df, phase_unmatched_df, report_path,
                 stats=p_stats, recipe=mini_recipe, recipe_file=recipe_file,
-                echo_recipe=recipe,
+                echo_recipe=recipe, base_dir=base_dir,
             )
             print(f"Phase {phase_idx + 1} report: {report_path}")
         except Exception as exc:
@@ -742,6 +743,7 @@ def main() -> int:
                 recipe_file=str(recipe_path.name),
                 timestamp=timestamp,
                 mermaid_mode=mermaid_mode,
+                base_dir=str(data_dir),
             )
     else:
         # Single-phase: top-level output (backward compatible)

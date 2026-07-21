@@ -307,7 +307,8 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
                     recipe: Optional[dict] = None,
                     recipe_file: str | None = None,
                     echo_recipe: Optional[dict] = None,
-                    merged: bool = False) -> str:
+                    merged: bool = False,
+                    base_dir: str = ".") -> str:
     """Generate the Excel report with Summary, Matched, and Analysis tabs.
 
     Args:
@@ -325,6 +326,8 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
         merged: When True, unmatched source rows are appended into the
                 Matched tab (match_step sentinel + is_unmatched flag),
                 per the merged output view. Analysis tab is unchanged.
+        base_dir: Data base dir for resolving sidecar paths in the dump
+                tabs (literal first, then relative to base_dir).
 
     Returns:
         Path to the generated report
@@ -437,6 +440,17 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
             import sys
             print(f"[WARN] Recipe tab generation failed: {exc}", file=sys.stderr)
 
+    # --- Sidecar dump tabs (raw text of each configured sidecar file) ---
+    # Driven by tab_recipe, not recipe: per-phase reports pass a phase-scoped
+    # mini_recipe, but sidecars are configured on the top-level recipe.
+    if tab_recipe:
+        try:
+            from sidecar_dump import write_sidecar_tabs
+            write_sidecar_tabs(wb, tab_recipe, base_dir)
+        except Exception as exc:
+            import sys
+            print(f"[WARN] Sidecar tab generation failed: {exc}", file=sys.stderr)
+
     wb.save(str(out))
     return str(out)
 
@@ -472,6 +486,7 @@ def run_and_report(recipe_path: str, base_dir: str = ".",
         output_path,
         stats=result["stats"],
         recipe=recipe,
+        base_dir=base_dir,
     )
 
     return path
