@@ -326,12 +326,18 @@ def test_reject_lookbehind_in_exclude_regex_at_load_time(tmp_path):
 
 
 def test_lookahead_never_reaches_the_write_path(tmp_path):
-    """The contract is a named load-time error, not a ComputeError mid-write."""
+    """The contract is a named load-time error, not a ComputeError mid-write.
+
+    It surfaces as RecipeValidationError -- the same gate every other field
+    error goes through -- not as a bare ValueError escaping the loader.
+    """
+    from recipe import RecipeValidationError
+
     recipe = load_recipe(RECIPE)
     bad = dict(VALID_GROUP, regex="(?i)(?=hy)hyatt")
     recipe["output"]["groups"]["file"] = _groups_file(tmp_path, [bad])
     out = tmp_path / "out"
-    with pytest.raises(ValueError, match="invalid regex"):
+    with pytest.raises(RecipeValidationError):
         _run(recipe, out)
     assert not out.exists() or not list(out.glob("*"))
 
@@ -533,6 +539,61 @@ def test_reject_match_columns_absent_from_source(tmp_path):
 def test_reject_group_colliding_with_a_source_column():
     errors, _ = _field_errors(load_recipe(RECIPE), extra_source_col="group")
     assert any("reserved for group tagging" in e for e in errors)
+
+
+def _groups_field_errors(tmp_path, groups=None, raw=None, ref=None):
+    """validate_fields errors for a recipe pointed at a given groups file."""
+    recipe = load_recipe(RECIPE)
+    if ref is not None:
+        recipe["output"]["groups"]["file"] = ref
+    elif raw is not None:
+        path = tmp_path / "groups.json"
+        path.write_text(raw)
+        recipe["output"]["groups"]["file"] = str(path)
+    else:
+        recipe["output"]["groups"]["file"] = _groups_file(tmp_path, groups)
+    errors, _ = _field_errors(recipe)
+    return errors
+
+
+def test_bad_groups_file_reports_instead_of_raising(tmp_path):
+    """Every groups failure is recipe input, so it belongs in the error report.
+
+    Escaping as a bare ValueError bypasses the [ERROR] summary and --dry-run
+    entirely, and reaches the user as a traceback.
+    """
+    bad = dict(VALID_GROUP, regex="(?i)(?=hy)hyatt")
+    errors = _groups_field_errors(tmp_path, [bad])
+    assert any("invalid regex" in e for e in errors)
+
+
+def test_missing_groups_file_reports_instead_of_raising(tmp_path):
+    errors = _groups_field_errors(tmp_path, ref=str(tmp_path / "gone.json"))
+    assert any("not found" in e for e in errors)
+
+
+def test_invalid_json_reports_instead_of_raising(tmp_path):
+    errors = _groups_field_errors(tmp_path, raw="{not json")
+    assert any("not valid JSON" in e for e in errors)
+
+
+def test_empty_groups_list_reports_instead_of_raising(tmp_path):
+    errors = _groups_field_errors(tmp_path, [])
+    assert any('no non-empty "groups" list' in e for e in errors)
+
+
+def test_every_groups_error_surfaces_in_one_pass(tmp_path):
+    """One run lists all of them -- not one, fix, rerun, repeat."""
+    groups = [
+        {"group_name": "a", "regex": "(?=x)a", "match_columns": ["l3_fmly_nm"]},
+        {"group_name": "a", "regex": "(?<=y)b", "match_columns": ["nope_col"]},
+        {"group_name": "c", "match_columns": ["l3_fmly_nm"]},
+    ]
+    errors = _groups_field_errors(tmp_path, groups)
+    assert any("invalid regex" in e and '"(?=x)a"' in e for e in errors)
+    assert any("must be unique" in e for e in errors)
+    assert any("neither regex nor values" in e for e in errors)
+    assert any("nope_col" in e for e in errors)
 
 
 def test_extra_keys_warning_surfaces_through_validate_fields():

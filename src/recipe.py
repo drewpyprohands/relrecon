@@ -996,9 +996,9 @@ def validate_fields(
             )
 
     # groups: the file is read here rather than in validate_recipe because
-    # match_columns can only be checked against loaded source data. Content
-    # errors raise (named, zero artifacts); match_columns misses join the
-    # collected errors so the author sees every miss at once.
+    # match_columns can only be checked against loaded source data. Every
+    # failure joins the collected errors -- a bad groups file is recipe input
+    # like any other, so it belongs in the report, not in a traceback.
     for name in groups_columns(out_cfg):
         if name in all_source_cols:
             errors.append(
@@ -1007,8 +1007,9 @@ def validate_fields(
                 "tagging -- rename the source column."
             )
     if (out_cfg.get("groups") or {}).get("file"):
-        group_defs, group_warnings = load_groups(out_cfg, base_dir)
+        group_defs, group_warnings, group_errors = read_groups(out_cfg, base_dir)
         warnings.extend(group_warnings)
+        errors.extend(group_errors)
         for group in group_defs:
             for col in group.get("match_columns") or []:
                 if col not in all_source_cols:
@@ -1261,18 +1262,23 @@ def groups_columns(output_cfg: dict) -> list[str]:
     return [GROUP_COLUMN] if (output_cfg.get("groups") or {}).get("file") else []
 
 
-def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list[str]]:
-    """Read and validate the groups.json named by output.groups.file.
+def read_groups(
+    output_cfg: dict, base_dir: str = "."
+) -> tuple[list[dict], list[str], list[str]]:
+    """Read and validate groups.json, reporting rather than raising.
 
-    Returns (groups, warnings). Raises ValueError with a named message for
-    every load-time failure, so no artifact is written against a bad file.
+    Returns (groups, warnings, errors). ``validate_fields`` calls this so a
+    bad groups file lands in the same structured error report as every other
+    recipe mistake, instead of escaping as a traceback. ``load_groups`` wraps
+    it for callers that want the exception.
+
     Path resolution follows the aliases.json / stopwords.json convention:
     literal first, then relative to the data base dir.
     """
     cfg = output_cfg.get("groups") or {}
     ref = cfg.get("file")
     if not ref:
-        return [], []
+        return [], [], []
 
     path = Path(ref)
     if not path.exists():
@@ -1286,26 +1292,26 @@ def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list
                 f'{ref}", the same way recipes spell '
                 '"aliases: config/aliases.json".'
             )
-        raise ValueError(
+        return [], [], [
             f'output.groups: file "{ref}" not found (tried "{ref}" and '
             f'"{Path(base_dir) / ref}").{hint}'
-        )
+        ]
     try:
         raw = json.loads(path.read_text())
     except OSError as exc:
-        raise ValueError(f'output.groups: cannot read "{path}": {exc}') from None
+        return [], [], [f'output.groups: cannot read "{path}": {exc}']
     except json.JSONDecodeError as exc:
-        raise ValueError(
+        return [], [], [
             f'output.groups: "{path}" is not valid JSON (line {exc.lineno}, '
             f"column {exc.colno}): {exc.msg}"
-        ) from None
+        ]
 
     groups = raw.get("groups") if isinstance(raw, dict) else None
     if not isinstance(groups, list) or not groups:
-        raise ValueError(
+        return [], [], [
             f'output.groups: "{path}" has no non-empty "groups" list. '
             "Expected {\"groups\": [ {...} ]}."
-        )
+        ]
 
     warnings: list[str] = []
     extra_keys: list[str] = []
@@ -1354,20 +1360,27 @@ def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list
             f"{label}.{k}" for k in group if k not in _GROUP_KNOWN_KEYS
         )
 
-    if errors:
-        if len(errors) == 1:
-            raise ValueError(errors[0])
-        detail = "\n  - ".join(errors)
-        raise ValueError(
-            f"output.groups: {len(errors)} errors in {path}:\n  - {detail}"
-        )
-
-    if extra_keys:
+    if extra_keys and not errors:
         warnings.append(
             f'output.groups: ignoring {len(extra_keys)} unrecognized key(s) in '
             f"{path}: {', '.join(extra_keys)}. Staged for a later issue; they "
             "have no effect in this version."
         )
+    return groups, warnings, errors
+
+
+def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list[str]]:
+    """read_groups, raising ValueError on any error.
+
+    For callers past the validation gate (the write path), where a bad file
+    is genuinely exceptional rather than user-correctable input.
+    """
+    groups, warnings, errors = read_groups(output_cfg, base_dir)
+    if errors:
+        if len(errors) == 1:
+            raise ValueError(errors[0])
+        detail = "\n  - ".join(errors)
+        raise ValueError(f"output.groups: {len(errors)} errors:\n  - {detail}")
     return groups, warnings
 
 
