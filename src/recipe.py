@@ -383,7 +383,7 @@ def validate_recipe(recipe: dict) -> list[str]:
         for i, p in enumerate(recipe.get("phases", [])):
             blocks.append((p.get("name", f"Phase {i + 1}"), p.get("output", {}) or {}))
         for label, block in blocks:
-            for key in ("decision_record", "compare_columns"):
+            for key in ("decision_record", "compare_columns", "groups"):
                 if key in block:
                     critical.append(
                         f"{label}: output.{key} is not supported in multi-phase "
@@ -429,6 +429,10 @@ def validate_recipe(recipe: dict) -> list[str]:
     dr_clashes = {n: taken[n] for n in dr_names if n in taken}
     for c in dr_names:
         taken[c] = "a decision_record output column"
+    group_names = groups_columns(out_cfg)
+    group_clashes = {n: taken[n] for n in group_names if n in taken}
+    for c in group_names:
+        taken[c] = "the groups output column"
 
     # Columns the presentation layer generates. Nothing else may produce them
     # and nothing may read them back as an input.
@@ -437,6 +441,8 @@ def validate_recipe(recipe: dict) -> list[str]:
     }
     for c in dr_names:
         generated[c] = "a decision_record output column"
+    for c in group_names:
+        generated[c] = "the groups output column"
 
     for name, where in derived_sources:
         if name in generated:
@@ -520,6 +526,33 @@ def validate_recipe(recipe: dict) -> list[str]:
                     "different write_to."
                 )
 
+    groups_cfg = out_cfg.get("groups")
+    if groups_cfg is not None:
+        if not groups_cfg.get("file"):
+            critical.append(
+                "output.groups: file is required. It names the groups.json "
+                "holding the group definitions."
+            )
+        mode = groups_cfg.get("mode", "all_match")
+        if mode not in ("all_match", "first_match"):
+            critical.append(
+                f'output.groups: mode "{mode}" is not one of all_match, '
+                "first_match."
+            )
+        for name in group_names:
+            clash = group_clashes.get(name)
+            if clash:
+                critical.append(
+                    f'output.groups: emits "{name}", which collides with '
+                    f"{clash}. \"{name}\" is reserved for group tagging."
+                )
+            if name in compare_names:
+                critical.append(
+                    f'output.groups: emits "{name}", which collides with a '
+                    f"compare_columns output. \"{name}\" is reserved for "
+                    "group tagging."
+                )
+
     # The computed columns are matched-side only: they are evaluated against
     # matched/merged rows, so naming them on the analysis side is meaningless.
     computed = set(output_computed_columns(out_cfg))
@@ -529,9 +562,10 @@ def validate_recipe(recipe: dict) -> list[str]:
         field = entry.get("field")
         if field in computed:
             critical.append(
-                f'output.columns.analysis[{i}]: "{field}" is a decision_record '
-                "or compare_columns output column. These are matched-view only "
-                "-- reference them from output.columns.matched instead."
+                f'output.columns.analysis[{i}]: "{field}" is a presentation-'
+                "layer output column (decision_record, compare_columns or "
+                "groups). These are matched-view only -- reference them from "
+                "output.columns.matched instead."
             )
 
     source_pops = {step["source"] for step in all_steps if "source" in step}
@@ -767,6 +801,7 @@ def validate_fields(
     recipe: dict,
     sources: dict[str, pl.DataFrame],
     populations: dict[str, dict],
+    base_dir: str = ".",
 ) -> tuple[list[str], list[str]]:
     """Validate all recipe field references against loaded DataFrames.
 
@@ -774,6 +809,7 @@ def validate_fields(
         recipe: Parsed recipe dict
         sources: {name: DataFrame} from loaded CSV/Parquet files
         populations: {name: {config, df, source}} after filtering
+        base_dir: Data base dir, for resolving sidecar files (groups.json)
 
     Returns:
         (errors, warnings). Errors are critical (match_fields, inherit),
@@ -958,6 +994,30 @@ def validate_fields(
                 f'output.decision_record: candidate "{c}" not found in source '
                 f"data or known derived columns"
             )
+
+    # groups: the file is read here rather than in validate_recipe because
+    # match_columns can only be checked against loaded source data. Every
+    # failure joins the collected errors -- a bad groups file is recipe input
+    # like any other, so it belongs in the report, not in a traceback.
+    for name in groups_columns(out_cfg):
+        if name in all_source_cols:
+            errors.append(
+                f'output.groups: emits "{name}", which collides with an '
+                f'existing source column. "{name}" is reserved for group '
+                "tagging -- rename the source column."
+            )
+    if (out_cfg.get("groups") or {}).get("file"):
+        group_defs, group_warnings, group_errors = read_groups(out_cfg, base_dir)
+        warnings.extend(group_warnings)
+        errors.extend(group_errors)
+        for group in group_defs:
+            for col in group.get("match_columns") or []:
+                if col not in all_source_cols:
+                    errors.append(
+                        f'output.groups: group "{group.get("group_name")}" '
+                        f'match_columns names "{col}", which is not a source '
+                        "column."
+                    )
 
     # final_rollup: group_key/target must resolve to a matched-output column
     available = all_source_cols | known_derived
@@ -1164,6 +1224,166 @@ def decision_record_columns(output_cfg: dict) -> list[str]:
     return [write_to, f"{write_to}_src"]
 
 
+# The single column output.groups emits. Reserved: nothing else may produce
+# it and nothing may read it back. Rollup ids will emit as separate scalar
+# columns in a follow-up -- this name stays the presentation tag.
+GROUP_COLUMN = "group"
+
+# Group keys with meaning in v1. Anything else is staged for a later issue
+# and ignored with one load-time warning.
+_GROUP_KNOWN_KEYS = {
+    "group_name", "regex", "exclude_regex", "values", "match_columns",
+}
+
+
+def _regex_rejection(pattern: str) -> str | None:
+    """Reason the matching engine rejects ``pattern``, or None if it accepts.
+
+    Compiled through Polars, not ``re``: matching runs on the Rust regex
+    crate, whose dialect differs from Python's in both directions. Python
+    accepts lookaround that Rust rejects, and Rust accepts Unicode classes
+    like ``\\p{Lu}`` that Python rejects -- validating with ``re`` would both
+    miss real failures and reject working patterns.
+    """
+    try:
+        pl.DataFrame({"_probe": [""]}).select(
+            pl.col("_probe").str.contains(pattern)
+        )
+    except Exception as exc:  # polars raises ComputeError, not re.error
+        # Keep the engine's own diagnosis, drop the expression dump it
+        # appends -- the recipe author never wrote that expression.
+        detail = str(exc).split("This error occurred in the following")[0]
+        return " ".join(detail.split()) or str(exc)
+    return None
+
+
+def groups_columns(output_cfg: dict) -> list[str]:
+    """The column output.groups emits ([] when unconfigured)."""
+    return [GROUP_COLUMN] if (output_cfg.get("groups") or {}).get("file") else []
+
+
+def read_groups(
+    output_cfg: dict, base_dir: str = "."
+) -> tuple[list[dict], list[str], list[str]]:
+    """Read and validate groups.json, reporting rather than raising.
+
+    Returns (groups, warnings, errors). ``validate_fields`` calls this so a
+    bad groups file lands in the same structured error report as every other
+    recipe mistake, instead of escaping as a traceback. ``load_groups`` wraps
+    it for callers that want the exception.
+
+    Path resolution follows the aliases.json / stopwords.json convention:
+    literal first, then relative to the data base dir.
+    """
+    cfg = output_cfg.get("groups") or {}
+    ref = cfg.get("file")
+    if not ref:
+        return [], [], []
+
+    path = Path(ref)
+    if not path.exists():
+        path = Path(base_dir) / ref
+    if not path.exists():
+        hint = ""
+        if "/" not in ref and (Path("config") / ref).exists():
+            hint = (
+                f' A file exists at "config/{ref}" -- sidecar paths are not '
+                'searched under config/, so write "file: config/'
+                f'{ref}", the same way recipes spell '
+                '"aliases: config/aliases.json".'
+            )
+        return [], [], [
+            f'output.groups: file "{ref}" not found (tried "{ref}" and '
+            f'"{Path(base_dir) / ref}").{hint}'
+        ]
+    try:
+        raw = json.loads(path.read_text())
+    except OSError as exc:
+        return [], [], [f'output.groups: cannot read "{path}": {exc}']
+    except json.JSONDecodeError as exc:
+        return [], [], [
+            f'output.groups: "{path}" is not valid JSON (line {exc.lineno}, '
+            f"column {exc.colno}): {exc.msg}"
+        ]
+
+    groups = raw.get("groups") if isinstance(raw, dict) else None
+    if not isinstance(groups, list) or not groups:
+        return [], [], [
+            f'output.groups: "{path}" has no non-empty "groups" list. '
+            "Expected {\"groups\": [ {...} ]}."
+        ]
+
+    warnings: list[str] = []
+    extra_keys: list[str] = []
+    seen: dict[str, int] = {}
+    errors: list[str] = []
+
+    for i, group in enumerate(groups):
+        if not isinstance(group, dict):
+            errors.append(f"output.groups: entry {i} is not an object.")
+            continue
+        name = group.get("group_name")
+        label = f'"{name}"' if name else f"entry {i}"
+        if not name:
+            errors.append(f"output.groups: entry {i} has no group_name.")
+        elif name in seen:
+            errors.append(
+                f'output.groups: group_name "{name}" is used by entries '
+                f"{seen[name]} and {i}. Group names must be unique."
+            )
+        else:
+            seen[name] = i
+
+        has_values = bool(group.get("values"))
+        for key in ("regex", "exclude_regex"):
+            pattern = group.get(key)
+            if pattern is None:
+                continue
+            reason = _regex_rejection(pattern)
+            if reason:
+                errors.append(
+                    f"output.groups: group {label} has an invalid {key} "
+                    f'"{pattern}": {reason}'
+                )
+        if not group.get("regex") and not has_values:
+            errors.append(
+                f"output.groups: group {label} has neither regex nor values. "
+                "A group needs at least one matching rule."
+            )
+        cols = group.get("match_columns")
+        if not isinstance(cols, list) or not cols:
+            errors.append(
+                f"output.groups: group {label} has no match_columns. "
+                "It is required and must name at least one source column."
+            )
+        extra_keys.extend(
+            f"{label}.{k}" for k in group if k not in _GROUP_KNOWN_KEYS
+        )
+
+    if extra_keys and not errors:
+        warnings.append(
+            f'output.groups: ignoring {len(extra_keys)} unrecognized key(s) in '
+            f"{path}: {', '.join(extra_keys)}. Staged for a later issue; they "
+            "have no effect in this version."
+        )
+    return groups, warnings, errors
+
+
+def load_groups(output_cfg: dict, base_dir: str = ".") -> tuple[list[dict], list[str]]:
+    """read_groups, raising ValueError on any error.
+
+    For callers past the validation gate (the write path), where a bad file
+    is genuinely exceptional rather than user-correctable input.
+    """
+    groups, warnings, errors = read_groups(output_cfg, base_dir)
+    if errors:
+        if len(errors) == 1:
+            raise ValueError(errors[0])
+        detail = "\n  - ".join(errors)
+        raise ValueError(f"output.groups: {len(errors)} errors:\n  - {detail}")
+    return groups, warnings
+
+
 def compare_output_names(output_cfg: dict) -> list[str]:
     """Ordered output.compare_columns[].output names ([] when unconfigured)."""
     return [
@@ -1175,7 +1395,11 @@ def compare_output_names(output_cfg: dict) -> list[str]:
 
 def output_computed_columns(output_cfg: dict) -> list[str]:
     """Every column the presentation-layer computations emit, in emit order."""
-    return decision_record_columns(output_cfg) + compare_output_names(output_cfg)
+    return (
+        decision_record_columns(output_cfg)
+        + compare_output_names(output_cfg)
+        + groups_columns(output_cfg)
+    )
 
 
 # Static metadata columns the pipeline always creates in matched output.

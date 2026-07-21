@@ -329,6 +329,11 @@ def generate_report(matched_df: pl.DataFrame, unmatched_df: pl.DataFrame | None 
     Returns:
         Path to the generated report
     """
+    # openpyxl cannot hold a list cell; the xlsx report renders the same
+    # ";"-joined text as the csv/xlsx raw writers.
+    matched_df = flatten_list_columns(matched_df)
+    unmatched_df = flatten_list_columns(unmatched_df)
+
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -505,8 +510,9 @@ def sort_by_source_order(df, source_df, key_field: str):
 def write_raw_data(df, path: str, fmt: str):
     """Write a DataFrame as raw data (csv, xlsx, or parquet)."""
     if fmt == "csv":
-        df.write_csv(path)
+        flatten_list_columns(df).write_csv(path)
     elif fmt == "xlsx":
+        df = flatten_list_columns(df)
         wb = Workbook()
         ws = wb.active
         ws.title = "Data"
@@ -757,6 +763,89 @@ def _compare_expr(df, entry: dict) -> pl.Expr:
     )
 
 
+def _group_hit(df, group: dict) -> pl.Expr:
+    """Boolean: does this group apply to each row?
+
+    Matching runs on raw source values only -- no tier/normalization. A group
+    applies iff any match_column matches ``regex`` or equals (trimmed,
+    case-insensitive) an entry in ``values``, and no match_column matches
+    ``exclude_regex``. An absent match_column contributes nothing rather than
+    failing, so the same expression works on the unmatched frame.
+    """
+    present = [c for c in (group.get("match_columns") or []) if c in df.columns]
+    if not present:
+        return pl.lit(False)
+
+    raw = [pl.col(c).cast(pl.String) for c in present]
+    hits = []
+    if group.get("regex"):
+        hits.extend(r.str.contains(group["regex"]) for r in raw)
+    values = group.get("values") or []
+    if values:
+        # Both sides fold through the same Polars function. Doing the values
+        # side in Python instead would disagree wherever the two case rules
+        # differ -- casefold() maps "straße" to "strasse", to_lowercase()
+        # leaves it alone -- and the row would silently fail to tag.
+        wanted = (
+            pl.Series([str(v) for v in values], dtype=pl.String)
+            .str.strip_chars()
+            .str.to_lowercase()
+            .to_list()
+        )
+        hits.extend(r.str.strip_chars().str.to_lowercase().is_in(wanted) for r in raw)
+    included = pl.any_horizontal(hits).fill_null(False)
+
+    if group.get("exclude_regex"):
+        excluded = pl.any_horizontal(
+            [r.str.contains(group["exclude_regex"]) for r in raw]
+        ).fill_null(False)
+        return included & ~excluded
+    return included
+
+
+def _groups_expr(df, cfg: dict, group_defs: list) -> pl.Expr:
+    """The ``group`` tag column for one output.groups config.
+
+    all_match  -> List(String), every matching name sorted, [] for no match.
+    first_match -> String, the first matching group in file order, null for
+    no match. File order is priority; there is no scoring rule.
+    """
+    from recipe import GROUP_COLUMN
+
+    hits = [(g.get("group_name"), _group_hit(df, g)) for g in group_defs]
+
+    if cfg.get("mode", "all_match") == "first_match":
+        expr = pl.lit(None, pl.String)
+        for name, hit in reversed(hits):
+            expr = pl.when(hit).then(pl.lit(name)).otherwise(expr)
+        return expr.alias(GROUP_COLUMN)
+
+    tagged = [
+        pl.when(hit).then(pl.lit(name)).otherwise(pl.lit(None, pl.String))
+        for name, hit in hits
+    ]
+    return (
+        pl.concat_list(tagged).list.drop_nulls().list.sort().alias(GROUP_COLUMN)
+    )
+
+
+def flatten_list_columns(df, sep: str = ";"):
+    """Join List(String) columns into scalars for csv/xlsx serialization.
+
+    parquet keeps the native list; the text formats cannot hold one and
+    openpyxl rejects a list cell outright.
+    """
+    if df is None:
+        return df
+    list_cols = [c for c, dt in zip(df.columns, df.dtypes, strict=True)
+                 if isinstance(dt, pl.List)]
+    if not list_cols:
+        return df
+    return df.with_columns(
+        pl.col(c).cast(pl.List(pl.String)).list.join(sep) for c in list_cols
+    )
+
+
 def _matched_column_fields(output_cfg: dict) -> set:
     """Field names referenced by output.columns.matched."""
     referenced = set()
@@ -769,8 +858,8 @@ def _matched_column_fields(output_cfg: dict) -> set:
     return referenced
 
 
-def apply_output_computations(df, output_cfg: dict):
-    """Attach decision_record / compare_columns columns to a frame.
+def apply_output_computations(df, output_cfg: dict, group_defs: list | None = None):
+    """Attach decision_record / compare_columns / groups columns to a frame.
 
     Runs on the matched and unmatched frames alike, so the merged view picks
     both up with no merged-view code: a candidate absent from the unmatched
@@ -786,6 +875,12 @@ def apply_output_computations(df, output_cfg: dict):
     if df is None or not computed or df.height == 0:
         return df
 
+    # groups lands in its own earlier pass: it reads only raw source values,
+    # and a follow-up's scalar emit columns must be materialized before the
+    # decision_record exprs can name them as candidates.
+    if group_defs:
+        df = df.with_columns(_groups_expr(df, output_cfg["groups"], group_defs))
+
     exprs = []
     if (output_cfg.get("decision_record") or {}).get("write_to"):
         exprs.extend(_decision_record_exprs(df, output_cfg["decision_record"]))
@@ -795,7 +890,7 @@ def apply_output_computations(df, output_cfg: dict):
     df = df.with_columns(exprs)
 
     referenced = _matched_column_fields(output_cfg)
-    drop = [c for c in computed if c not in referenced]
+    drop = [c for c in computed if c not in referenced and c in df.columns]
     return df.drop(drop) if drop else df
 
 

@@ -1,0 +1,11 @@
+vnd_id,match_step,group,is_unmatched
+vnd1234,Exact L3,hyatt,false
+vnd2364,Exact L3,"",false
+vnd2983,Exact L3,key accounts;law eagles,false
+vnd5510,Exact L3,"",false
+vnd3983,unmatched,hyatt,true
+vnd9238,unmatched,hyatt,true
+vnd2345,unmatched,ernst & young,true
+vnd3923,unmatched,key accounts;law eagles,true
+vnd7781,unmatched,key accounts;law eagles,true
+vnd8420,unmatched,key accounts,true

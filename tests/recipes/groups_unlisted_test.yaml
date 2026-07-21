@@ -1,0 +1,64 @@
+name: Groups Test
+description: >
+  Fixture for output.groups tag-only mode (Issue #97). Headers equal field
+  names so matched and merged csv are asserted byte-for-byte.
+
+  Match split: vnd1234/vnd2983/vnd2364/vnd5510 hit dest on l3; the rest are
+  unmatched, so the merged view carries tagged rows on both sides.
+
+  Group coverage: "hyatt" is regex + exclude_regex over two match_columns
+  (vnd2364 whyattelsburg is the near-miss the exclude kills); "law eagles"
+  is values-only exact match (vnd7781 " law eagles" hits on trim +
+  casefold, vnd8420 "Law Eagles Holdings" is the near-miss); "key accounts"
+  overlaps "law eagles" on four rows to exercise multi-group rendering.
+
+  File order is law eagles before key accounts, the reverse of alphabetical
+  order, so all_match (sorted) and first_match (file order) disagree on the
+  overlap rows -- proving file order is the first_match rule.
+
+  gr_groups.json also carries rollup_parent_id and notes on the hyatt group;
+  both are staged for a later issue and must be ignored with one warning.
+
+sources:
+  src:
+    file: gr_source.csv
+  dst:
+    file: gr_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw, clean]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+
+output:
+  format: csv
+  matched_unmatched: [merged, separate]
+  match_mode: best_match
+  groups:
+    file: gr_groups.json
+    mode: all_match
+  columns:
+    matched:
+      - field: vnd_id
+        header: vnd_id
+      - field: match_step
+        header: match_step
+    analysis:
+      - field: vnd_id
+        header: vnd_id
+      - field: l3_fmly_nm
+        header: l3_fmly_nm
