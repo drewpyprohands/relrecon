@@ -44,12 +44,28 @@ def resolve_sidecar(ref: str, base_dir: str) -> Path:
     return path
 
 
-def write_sidecar_tab(ws, path: Path, text: str) -> None:
-    """Write one sidecar dump: row 1 = path, row 2+ = file lines, column A."""
+def sidecar_rows(path: Path) -> list[str]:
+    """Read a sidecar into dump rows: resolved path, then verbatim file lines.
+
+    Every way a sidecar can defeat the dump -- unreadable, wrong encoding,
+    bytes openpyxl refuses -- raises here, before the caller creates a
+    worksheet. That ordering is what keeps a failure from leaving a
+    truncated tab behind: a dump tab is exact or absent, never partial.
+    """
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    rows = [str(path.resolve()), *path.read_text(encoding="utf-8-sig").splitlines()]
+    for i, row in enumerate(rows):
+        if ILLEGAL_CHARACTERS_RE.search(row):
+            raise ValueError(f"line {i} has characters Excel cannot store")
+    return rows
+
+
+def write_sidecar_tab(ws, rows: list[str]) -> None:
+    """Write pre-validated dump rows into column A, one row per line."""
     from openpyxl.styles import Font
 
     mono = Font(name="Consolas", size=10)
-    rows = [str(path.resolve()), *text.splitlines()]
     for i, line in enumerate(rows, start=1):
         cell = ws.cell(row=i, column=1, value=line if line else None)
         cell.font = mono
@@ -70,9 +86,12 @@ def write_sidecar_tabs(wb, recipe: dict, base_dir: str = ".") -> None:
             continue
         path = resolve_sidecar(ref, base_dir)
         try:
-            text = path.read_text(encoding="utf-8-sig")
-        except OSError as exc:
-            print(f"[WARN] {title} tab skipped -- cannot read {ref}: {exc}",
+            rows = sidecar_rows(path)
+        except Exception as exc:
+            # Deliberately broad: one bad sidecar must cost its own tab and
+            # nothing else -- not the report, not the sidecars after it.
+            # Safe because sidecar_rows raises before any sheet is created.
+            print(f"[WARN] {title} tab skipped -- cannot dump {ref}: {exc}",
                   file=sys.stderr)
             continue
-        write_sidecar_tab(wb.create_sheet(title), path, text)
+        write_sidecar_tab(wb.create_sheet(title), rows)

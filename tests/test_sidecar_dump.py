@@ -119,6 +119,43 @@ def test_sidecar_resolved_relative_to_base_dir():
     assert rows[1:] == GROUPS.read_text(encoding="utf-8-sig").splitlines()
 
 
+def test_non_utf8_sidecar_skips_only_its_own_tab(capsys, tmp_path):
+    """A cp1252 sidecar (Excel's default) costs its own tab and nothing else."""
+    bad = tmp_path / "cp1252_exclusions.csv"
+    bad.write_bytes(b"step,vnd_id,note\nExact L3,vnd8420,caf\xe9\n")
+
+    wb = _report(_recipe(exclusions=str(bad), aliases=str(ALIASES),
+                         groups=str(GROUPS)))
+
+    assert "Exclusions" not in wb.sheetnames
+    # Sidecars ordered after the failure are still dumped.
+    assert {"Aliases", "Groups"} <= set(wb.sheetnames)
+    warnings = [
+        line for line in capsys.readouterr().err.splitlines()
+        if line.startswith("[WARN]")
+    ]
+    assert len(warnings) == 1
+    assert "cp1252_exclusions.csv" in warnings[0]
+
+
+def test_illegal_char_sidecar_never_writes_a_partial_tab(capsys, tmp_path):
+    """A control byte skips the tab outright -- no truncated dump survives."""
+    bad = tmp_path / "ctrl_groups.json"
+    bad.write_text('{\n  "groups": [],\n  "note": "bad\x07byte"\n}\n')
+
+    wb = _report(_recipe(groups=str(bad), aliases=str(ALIASES)))
+
+    # The tab must be absent, not present-and-truncated at the bad line.
+    assert "Groups" not in wb.sheetnames
+    assert "Aliases" in wb.sheetnames
+    warnings = [
+        line for line in capsys.readouterr().err.splitlines()
+        if line.startswith("[WARN]")
+    ]
+    assert len(warnings) == 1
+    assert "ctrl_groups.json" in warnings[0]
+
+
 def test_unreadable_sidecar_skips_tab_with_warning(capsys):
     """Configured but unreadable -> report still generated, tab absent, one WARN."""
     wb = _report(_recipe(
