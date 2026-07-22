@@ -246,6 +246,8 @@ def clean(value: str) -> str:
     s = str(value).strip().lower()
     # Remove punctuation (commas, periods, semicolons, colons)
     s = re.sub(r'[,.;:]+', '', s)
+    # Preserve token boundaries when replacing hyphens.
+    s = s.replace('-', ' ')
     # Collapse multiple spaces
     s = re.sub(r'\s+', ' ', s)
     return s.strip()
