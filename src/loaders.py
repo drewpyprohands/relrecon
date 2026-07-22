@@ -272,6 +272,13 @@ def _load_trino(conn_config: dict, query: str) -> pl.DataFrame:
                 v = True
         conn_kwargs["verify"] = v
 
+    spooling_enabled = os.getenv("TRINO_SPOOLING_ENABLED", "true")
+    session_properties = dict(conn_config.get("session_properties", {}))
+    session_properties["spooling_enabled"] = spooling_enabled.lower() in (
+        "1", "true", "yes"
+    )
+    conn_kwargs["session_properties"] = session_properties
+
     conn_kwargs = {k: v for k, v in conn_kwargs.items() if v is not None}
 
     conn = connect(**conn_kwargs)
