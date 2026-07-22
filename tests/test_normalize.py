@@ -46,6 +46,7 @@ def test_clean():
         ("trailing semicolon;", "trailing semicolon"),
         ("Pelomar Consulting, LLC", "pelomar consulting llc"),
         ("Bapienx, Inc.", "bapienx inc"),
+        ("alpha-beta", "alpha beta"),
         ("", ""),
         (None, ""),
     ]
