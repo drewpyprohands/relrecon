@@ -4,6 +4,7 @@ import os
 import sqlite3
 import sys
 import time
+import types
 
 import polars as pl
 import pytest
@@ -461,7 +462,16 @@ def test_trino_spooling_environment_sets_session_property(
         monkeypatch.delenv("TRINO_SPOOLING_ENABLED", raising=False)
     else:
         monkeypatch.setenv("TRINO_SPOOLING_ENABLED", environment_value)
-    monkeypatch.setattr("trino.dbapi.connect", mock_connect)
+    trino_module = types.ModuleType("trino")
+    auth_module = types.ModuleType("trino.auth")
+    dbapi_module = types.ModuleType("trino.dbapi")
+    auth_module.BasicAuthentication = object
+    dbapi_module.connect = mock_connect
+    trino_module.auth = auth_module
+    trino_module.dbapi = dbapi_module
+    monkeypatch.setitem(sys.modules, "trino", trino_module)
+    monkeypatch.setitem(sys.modules, "trino.auth", auth_module)
+    monkeypatch.setitem(sys.modules, "trino.dbapi", dbapi_module)
 
     df = _load_trino(
         {
