@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from loaders import dispatch_loader, load_file, load_sql, _interpolate_env
+from loaders import _interpolate_env, _load_trino, dispatch_loader, load_file, load_sql
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +426,71 @@ def test_trino_import_error(monkeypatch):
     }
     with pytest.raises(ImportError, match="[Tt]rino"):
         dispatch_loader(config)
+
+
+@pytest.mark.parametrize(
+    ("environment_value", "expected_spooling"),
+    [(None, True), ("TrUe", True), ("fAlSe", False)],
+)
+def test_trino_spooling_environment_sets_session_property(
+    monkeypatch, environment_value, expected_spooling
+):
+    captured_kwargs = {}
+
+    class Cursor:
+        description = [("value",)]
+
+        def execute(self, query):
+            assert query == "SELECT 1"
+
+        def fetchall(self):
+            return [(1,)]
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            pass
+
+    def mock_connect(**kwargs):
+        captured_kwargs.update(kwargs)
+        return Connection()
+
+    if environment_value is None:
+        monkeypatch.delenv("TRINO_SPOOLING_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("TRINO_SPOOLING_ENABLED", environment_value)
+    monkeypatch.setattr("trino.dbapi.connect", mock_connect)
+
+    df = _load_trino(
+        {
+            "host": "trino.example.com",
+            "port": 8443,
+            "user": "analyst",
+            "catalog": "hive",
+            "schema": "analytics",
+            "http_scheme": "https",
+            "verify": "false",
+            "session_properties": {"query_max_run_time": "5m"},
+        },
+        "SELECT 1",
+    )
+
+    assert df.to_dicts() == [{"value": "1"}]
+    assert captured_kwargs == {
+        "host": "trino.example.com",
+        "port": 8443,
+        "user": "analyst",
+        "catalog": "hive",
+        "schema": "analytics",
+        "http_scheme": "https",
+        "verify": False,
+        "session_properties": {
+            "query_max_run_time": "5m",
+            "spooling_enabled": expected_spooling,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
