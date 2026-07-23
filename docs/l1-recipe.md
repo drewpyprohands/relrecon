@@ -85,7 +85,7 @@ The only reliable field for the migrated records is the **child/vendor name (`l3
 
 **Step 4: Fuzzy Pop1 -> Pop3.** Same as Step 2 but fuzzy at threshold 70.
 
-All steps run against **all** Pop1 records -- the "cascade" is resolved at the end via dedup, not by excluding matched records from later steps. In `best_match` mode (default), dedup keeps the earliest step then highest scores when multiple steps match the same record. Use `all_matches` mode in the recipe to skip dedup and see all candidates for analysis.
+All steps run against **all** Pop1 records -- the "cascade" is resolved at the end via dedup, not by excluding matched records from later steps. In `best_match` mode (default), dedup keeps the earliest step then highest scores when multiple steps match the same record. In single-phase `all_matches` mode, each record retains every exact candidate or every threshold-passing fuzzy candidate from its first successful tier. This can produce N×M candidates and a correspondingly larger report and runtime; multi-phase behavior is unchanged.
 
 ### Manual exclusions
 
