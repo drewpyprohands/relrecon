@@ -106,7 +106,8 @@ def match_names_exact(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                       aliases: dict = None,
                       stopwords: list = None,
                       dedup_field: str = None,
-                      exclude_self_key: str = None) -> pl.DataFrame:
+                      exclude_self_key: str = None,
+                      match_mode: str = "best_match") -> pl.DataFrame:
     """Exact name matching via Polars joins. No Python loops.
 
     Tries tiers in order (default: raw, clean). Deduplicates by tier priority
@@ -132,6 +133,10 @@ def match_names_exact(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         else:
             src = _clean_column(source_df, src_field, "_match_key")
             dst = _clean_column(dest_df, dst_field, "_match_key")
+
+        if match_mode == "all_matches":
+            src = src.with_row_index("_all_match_src_order")
+            dst = dst.with_row_index("_all_match_dst_order")
 
         # Pick a suffix that won't collide with existing columns.
         # In multi-phase pipelines, _previous_matched may already carry
@@ -167,13 +172,24 @@ def match_names_exact(source_df: pl.DataFrame, dest_df: pl.DataFrame,
 
     combined = pl.concat(results, how="diagonal")
 
-    # Dedup: keep highest priority tier per source record
-    combined = (
-        combined
-        .sort("_tier_priority")
-        .unique(subset=[dedup_key], keep="first")
-        .drop([c for c in combined.columns if c.startswith("_")])
-    )
+    if match_mode == "all_matches":
+        # Keep every candidate from each source record's first successful tier.
+        # Source and destination row indexes preserve deterministic input order.
+        combined = (
+            combined
+            .with_columns(pl.col("_tier_priority").min().over(dedup_key).alias("_first_tier"))
+            .filter(pl.col("_tier_priority") == pl.col("_first_tier"))
+            .sort(["_tier_priority", "_all_match_src_order", "_all_match_dst_order"])
+            .drop("_tier_priority", "_all_match_src_order", "_all_match_dst_order", "_first_tier")
+        )
+    else:
+        # Dedup: keep highest priority tier per source record
+        combined = (
+            combined
+            .sort("_tier_priority")
+            .unique(subset=[dedup_key], keep="first")
+            .drop([c for c in combined.columns if c.startswith("_")])
+        )
     return combined
 
 
@@ -185,7 +201,8 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                       aliases: dict = None,
                       stopwords: list = None,
                       dedup_field: str = None,
-                      exclude_self_key: str = None) -> pl.DataFrame:
+                      exclude_self_key: str = None,
+                      match_mode: str = "best_match") -> pl.DataFrame:
     """Fuzzy name matching via RapidFuzz cdist (chunked to bound memory).
 
     Tries tiers in order, deduplicates by tier priority (earlier wins).
@@ -242,6 +259,7 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         for chunk_start in range(0, len(src_keys), chunk_size):
             chunk_end = min(chunk_start + chunk_size, len(src_keys))
             chunk_keys = src_keys[chunk_start:chunk_end]
+            self_mask = None
 
             score_matrix = rprocess.cdist(
                 chunk_keys, dst_keys,
@@ -259,19 +277,32 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                 self_mask = src_self_chunk[:, None] == dst_self_keys[None, :]
                 score_matrix[self_mask] = 0.0
 
-            best_dst_idxs_chunk = score_matrix.argmax(axis=1)
-            best_scores_chunk = score_matrix[
-                np.arange(len(chunk_keys)), best_dst_idxs_chunk
-            ]
+            if match_mode == "all_matches":
+                # Collect every threshold hit in this bounded chunk. The final
+                # result can be N×M because all_matches intentionally exposes
+                # every candidate, but the score matrix remains chunk-bounded.
+                candidate_mask = score_matrix >= threshold
+                if self_mask is not None:
+                    candidate_mask &= ~self_mask
+                hit_rows, hit_cols = np.where(candidate_mask)
+                if hit_rows.size:
+                    all_src_idxs.extend((hit_rows + chunk_start).tolist())
+                    all_dst_idxs.extend(hit_cols.tolist())
+                    all_scores.extend(score_matrix[hit_rows, hit_cols].tolist())
+            else:
+                best_dst_idxs_chunk = score_matrix.argmax(axis=1)
+                best_scores_chunk = score_matrix[
+                    np.arange(len(chunk_keys)), best_dst_idxs_chunk
+                ]
 
-            # cdist sets below-threshold scores to 0
-            mask = best_scores_chunk >= threshold
-            if mask.any():
-                # Offset source indices back to global positions
-                src_hits = np.where(mask)[0] + chunk_start
-                all_src_idxs.extend(src_hits.tolist())
-                all_dst_idxs.extend(best_dst_idxs_chunk[mask].tolist())
-                all_scores.extend(best_scores_chunk[mask].tolist())
+                # cdist sets below-threshold scores to 0
+                mask = best_scores_chunk >= threshold
+                if mask.any():
+                    # Offset source indices back to global positions
+                    src_hits = np.where(mask)[0] + chunk_start
+                    all_src_idxs.extend(src_hits.tolist())
+                    all_dst_idxs.extend(best_dst_idxs_chunk[mask].tolist())
+                    all_scores.extend(best_scores_chunk[mask].tolist())
 
             # Free chunk memory immediately
             del score_matrix
@@ -313,13 +344,25 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
 
     combined = pl.concat(results, how="diagonal")
 
-    # Dedup: keep best tier per source record, then highest score within tier
-    combined = (
-        combined
-        .sort(["_tier_priority", "name_score"], descending=[False, True])
-        .unique(subset=[dedup_key], keep="first")
-        .drop([c for c in combined.columns if c.startswith("_")])
-    )
+    if match_mode == "all_matches":
+        # Keep every above-threshold candidate from each source record's first
+        # successful tier, ordered by source, score, then destination position.
+        combined = (
+            combined
+            .with_row_index("_all_match_order")
+            .with_columns(pl.col("_tier_priority").min().over(dedup_key).alias("_first_tier"))
+            .filter(pl.col("_tier_priority") == pl.col("_first_tier"))
+            .sort(["_tier_priority", "name_score", "_all_match_order"], descending=[False, True, False])
+            .drop("_tier_priority", "_all_match_order", "_first_tier")
+        )
+    else:
+        # Dedup: keep best tier per source record, then highest score within tier
+        combined = (
+            combined
+            .sort(["_tier_priority", "name_score"], descending=[False, True])
+            .unique(subset=[dedup_key], keep="first")
+            .drop([c for c in combined.columns if c.startswith("_")])
+        )
     return combined
 
 
@@ -482,7 +525,8 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
                       step_config: dict,
                       norm: dict = None,
                       dedup_field: str = None,
-                      collect_rejections: bool = False) -> pl.DataFrame | tuple:
+                      collect_rejections: bool = False,
+                      match_mode: str = "best_match") -> pl.DataFrame | tuple:
     """Execute one matching step. Returns (matched_df, rejections) when collect_rejections=True."""
     if norm is None:
         norm = {}
@@ -561,6 +605,7 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
             stopwords=name_stopwords,
             dedup_field=dedup_field,
             exclude_self_key=_self_key,
+            match_mode=match_mode,
         )
     else:
         matched = match_names_exact(
@@ -571,6 +616,7 @@ def run_matching_step(source_df: pl.DataFrame, dest_df: pl.DataFrame,
             stopwords=name_stopwords,
             dedup_field=dedup_field,
             exclude_self_key=_self_key,
+            match_mode=match_mode,
         )
 
     if matched.height == 0:
@@ -701,7 +747,7 @@ def _build_populations(recipe_pops: dict, sources: dict) -> dict:
 def _run_phase_steps(steps, populations, sources,
                      norm=None,
                      track_field=None, tie_breaker=None,
-                     step_offset=0):
+                     step_offset=0, match_mode="best_match"):
     """Run matching steps for a single phase. Returns results dict."""
     all_matched = []
     matched_source_keys = set()
@@ -741,6 +787,7 @@ def _run_phase_steps(steps, populations, sources,
             src_df, dst_df, step,
             norm=norm, dedup_field=track_field,
             collect_rejections=True,
+            match_mode=match_mode,
         )
         matched, rejections = step_result
 
@@ -1155,6 +1202,7 @@ def _run_single_phase(recipe, sources, norm, timings, base_dir="."):
         recipe["steps"], populations, sources,
         norm=norm,
         track_field=track_field, tie_breaker=tie_breaker,
+        match_mode=match_mode,
     )
     timings["match"] = _time.time() - t
 

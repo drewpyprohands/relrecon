@@ -132,7 +132,7 @@ To create a new recipe for a different reconciliation problem, copy this YAML an
 
 **Inheritance:** On match, the recipe defines which fields to pull from the destination record into the result. This is how you derive new relationships (e.g. match on child name, inherit the parent ID).
 
-**Match modes:** `best_match` (default) keeps one result per source record. Earlier steps and higher scores win. `all_matches` returns every candidate for analysis.
+**Match modes:** `best_match` (default) keeps one result per source record. Earlier steps and higher scores win. In single-phase recipes, `all_matches` retains every exact candidate, or every fuzzy candidate at or above threshold, from each source record's first successful normalization tier. It can therefore produce up to N×M rows for a step, increasing report size, runtime, and memory used for the returned results; use it for analysis when that cardinality is appropriate. Multi-phase behavior is unchanged.
 
 **Report columns:** The `output.columns` section is optional. When defined, it controls exactly which columns appear and in what order. Use `fields` (plural) for variant columns from different steps. The engine coalesces them automatically.
 
