@@ -176,9 +176,9 @@ def test_parse_address_auto():
     results = []
     results.append({"check": "classified", "passed": result["classified"],
                      "actual": result["classified"]})
-    # Should use default since libpostal likely not installed
+    # Tests force the built-in parser for deterministic address scores.
     results.append({"check": "libpostal_status",
-                     "passed": True,  # Either mode works
+                     "passed": not LIBPOSTAL_AVAILABLE,
                      "actual": f"libpostal={'available' if LIBPOSTAL_AVAILABLE else 'not available'}"})
     for r in results:
         assert r["passed"], f"Failed: {r}"
