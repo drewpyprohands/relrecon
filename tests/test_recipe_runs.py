@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from matching import run_pipeline  # noqa: E402, I001
 
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
-RECIPE_DIR = os.path.join(os.path.dirname(__file__), "..", "config", "recipes")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+RECIPE_DIR = os.path.join(os.path.dirname(__file__), "config", "recipes")
 
 
 def _load_recipe(name):
@@ -83,13 +83,14 @@ class TestStepDefaultsExample:
 # --- Multi-phase recipes ---
 
 
-def _run_cli(recipe_name):
+def _run_cli(recipe_name, output_dir):
     """Run a recipe through the CLI entry point (for output file generation)."""
     result = subprocess.run(
         [sys.executable, "-m", "src", "--recipe", os.path.join(RECIPE_DIR, recipe_name),
          "--data", DATA_DIR],
         capture_output=True, text=True,
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
+        cwd=output_dir,
+        env={**os.environ, "PYTHONPATH": os.path.join(os.path.dirname(__file__), "..")},
     )
     return result
 
@@ -148,17 +149,17 @@ class TestGleifParentLookupTest:
 class TestGleifPhasedOutput:
     """Per-phase output file generation (ADR-003)."""
 
-    def test_phase1_csv_and_md_summary(self):
+    def test_phase1_csv_and_md_summary(self, tmp_path):
         """Phase 1: CSV data + markdown summary."""
-        r = _run_cli("gleif_phased_output_example.yaml")
+        r = _run_cli("gleif_phased_output_example.yaml", str(tmp_path))
         assert r.returncode == 0, r.stderr
         # Phase 1 has auto-generated path (no hardcoded path in recipe)
         assert "Phase 1 data:" in r.stdout
         assert "Phase 1 summary:" in r.stdout
         # Find the CSV file in output
-        csv_line = [l for l in r.stdout.splitlines() if "Phase 1 data:" in l][0]
+        csv_line = [line for line in r.stdout.splitlines() if "Phase 1 data:" in line][0]
         csv_path = csv_line.split("Phase 1 data: ")[1].split(" (")[0]
-        full_csv = os.path.join(os.path.dirname(__file__), "..", csv_path)
+        full_csv = os.path.join(tmp_path, csv_path)
         assert os.path.exists(full_csv), f"CSV not found: {full_csv}"
         df = pl.read_csv(full_csv)
         assert df.height >= 3
@@ -166,18 +167,18 @@ class TestGleifPhasedOutput:
         assert "Matched LEI" in df.columns
         assert "Match Score" in df.columns
 
-    def test_phase2_raw_xlsx_no_summary(self):
+    def test_phase2_raw_xlsx_no_summary(self, tmp_path):
         """Phase 2: raw XLSX data, no summary."""
-        r = _run_cli("gleif_phased_output_example.yaml")
+        r = _run_cli("gleif_phased_output_example.yaml", str(tmp_path))
         assert r.returncode == 0, r.stderr
         assert "Phase 2 data:" in r.stdout
         # Phase 2 has summary: none -- no summary or report lines
         assert "Phase 2 summary:" not in r.stdout
         assert "Phase 2 report:" not in r.stdout
         # Find the XLSX file
-        xlsx_line = [l for l in r.stdout.splitlines() if "Phase 2 data:" in l][0]
+        xlsx_line = [line for line in r.stdout.splitlines() if "Phase 2 data:" in line][0]
         xlsx_path = xlsx_line.split("Phase 2 data: ")[1].split(" (")[0]
-        full_xlsx = os.path.join(os.path.dirname(__file__), "..", xlsx_path)
+        full_xlsx = os.path.join(tmp_path, xlsx_path)
         assert os.path.exists(full_xlsx)
         from openpyxl import load_workbook
         wb = load_workbook(full_xlsx)
@@ -187,17 +188,17 @@ class TestGleifPhasedOutput:
         assert "Child LEI" in headers
         assert "Parent LEI" in headers
 
-    def test_phase3_csv_with_md_and_xlsx_summary(self):
+    def test_phase3_csv_with_md_and_xlsx_summary(self, tmp_path):
         """Phase 3: CSV data + md summary + xlsx report."""
-        r = _run_cli("gleif_phased_output_example.yaml")
+        r = _run_cli("gleif_phased_output_example.yaml", str(tmp_path))
         assert r.returncode == 0, r.stderr
         assert "Phase 3 data:" in r.stdout
         assert "Phase 3 summary:" in r.stdout
         assert "Phase 3 report:" in r.stdout
 
-    def test_no_top_level_report(self):
+    def test_no_top_level_report(self, tmp_path):
         """Multi-phase recipes must not produce top-level output."""
-        r = _run_cli("gleif_phased_output_example.yaml")
+        r = _run_cli("gleif_phased_output_example.yaml", str(tmp_path))
         assert r.returncode == 0, r.stderr
         # No top-level "Report saved:" or "Data saved:" lines
         assert "Report saved:" not in r.stdout

@@ -9,6 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from signal_report import format_report
 
 
+DATA_DIR = Path(__file__).parent / "data"
+
+
 def _mock_results():
     """Build a minimal analyze_dataset() result for testing."""
     return {
@@ -116,7 +119,7 @@ def test_format_report_unicode_flags_shown():
 def test_cli_analyze_runs():
     """Integration: --analyze flag runs without error."""
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/core_parent_export.csv",
+        [sys.executable, "-m", "src", "--analyze", str(DATA_DIR / "core_parent_export.csv"),
          "--columns", "Vendor Name"],
         capture_output=True, text=True, cwd=str(Path(__file__).parent.parent),
     )
@@ -128,7 +131,7 @@ def test_cli_analyze_runs():
 def test_cli_analyze_auto_select():
     """Integration: auto-selects name/address columns with --columns auto."""
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/core_parent_export.csv",
+        [sys.executable, "-m", "src", "--analyze", str(DATA_DIR / "core_parent_export.csv"),
          "--columns", "auto"],
         capture_output=True, text=True, cwd=str(Path(__file__).parent.parent),
     )
@@ -138,7 +141,7 @@ def test_cli_analyze_auto_select():
 
 def test_cli_analyze_bad_file():
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/nonexistent.csv"],
+        [sys.executable, "-m", "src", "--analyze", str(DATA_DIR / "nonexistent.csv")],
         capture_output=True, text=True, cwd=str(Path(__file__).parent.parent),
     )
     assert result.returncode == 1
@@ -146,7 +149,7 @@ def test_cli_analyze_bad_file():
 
 def test_cli_analyze_bad_column():
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/core_parent_export.csv",
+        [sys.executable, "-m", "src", "--analyze", str(DATA_DIR / "core_parent_export.csv"),
          "--columns", "nonexistent_col"],
         capture_output=True, text=True, cwd=str(Path(__file__).parent.parent),
     )

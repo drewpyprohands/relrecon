@@ -312,7 +312,7 @@ def test_score_empty_addresses():
 def test_score_with_synthetic_data():
     """Score addresses from our actual synthetic datasets."""
     import polars as pl
-    base = Path(__file__).parent.parent / "data"
+    base = Path(__file__).parent / "data"
     core = pl.read_csv(str(base / "core_parent_export.csv"))
     multi = pl.read_csv(str(base / "tp_multi_pop_dataset.csv"))
 

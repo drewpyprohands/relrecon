@@ -20,8 +20,8 @@ from recipe_echo import (
 )
 from report import generate_report, write_raw_data
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPES = Path(__file__).parent.parent / "config" / "recipes"
+DATA_DIR = Path(__file__).parent / "data"
+RECIPES = Path(__file__).parent / "config" / "recipes"
 L1_RECIPE = RECIPES / "l1_reconciliation.yaml"
 TIE_RECIPE = RECIPES / "tie_breaker_example.yaml"
 PHASED_RECIPE = RECIPES / "gleif_phased_output_example.yaml"

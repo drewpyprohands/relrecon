@@ -15,10 +15,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # xlsx (creation timestamp) and _summary.md (wall-clock timings) are excluded
 # from hashing: neither is byte-stable on any branch, by design.
 RECIPES = [
-    "tests/recipes/decision_record_test.yaml",
-    "tests/recipes/merged_output_test.yaml",
-    "tests/recipes/source_order_test.yaml",
-    "config/recipes/multipop_comparison_rollup.yaml",
+    "tests/config/recipes/decision_record_test.yaml",
+    "tests/config/recipes/merged_output_test.yaml",
+    "tests/config/recipes/source_order_test.yaml",
+    "tests/config/recipes/multipop_comparison_rollup.yaml",
 ]
 
 
@@ -30,7 +30,7 @@ def run(recipe_path, out_dir):
         [
             str(ROOT / ".venv" / "bin" / "python"), "-m", "src",
             "--recipe", str(ROOT / recipe_path),
-            "--data", str(ROOT / "data"),
+            "--data", str(ROOT / "tests" / "data"),
             "--output", str(target / "data.csv"),
         ],
         cwd=ROOT, check=True, capture_output=True,

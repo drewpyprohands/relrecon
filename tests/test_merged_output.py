@@ -13,8 +13,8 @@ from matching import run_pipeline
 from recipe import load_recipe, validate_recipe
 
 SRC = Path(__file__).parent.parent / "src"
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPE = str(Path(__file__).parent / "recipes" / "merged_output_test.yaml")
+DATA_DIR = Path(__file__).parent / "data"
+RECIPE = str(Path(__file__).parent / "config" / "recipes" / "merged_output_test.yaml")
 
 MERGED_HEADER = "vnd_id,l3_fmly_nm,match_step,derived_l1_id,is_unmatched"
 
@@ -253,7 +253,7 @@ def test_reserved_step_name_unmatched():
 
 
 def test_multi_phase_matched_unmatched_rejected():
-    recipe = load_recipe(str(Path(__file__).parent / "recipes" / "gleif_parent_phased_test.yaml"))
+    recipe = load_recipe(str(Path(__file__).parent / "config" / "recipes" / "gleif_parent_phased_test.yaml"))
     idx = next(i for i, p in enumerate(recipe["phases"]) if "output" in p)
     recipe["phases"][idx]["output"]["matched_unmatched"] = "merged"
     with pytest.raises(ValueError, match="multi-phase"):

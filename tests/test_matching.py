@@ -17,8 +17,8 @@ import polars as pl
 from recipe import load_recipe, load_source, filter_population, build_filter_expr, validate_recipe
 from matching import _load_normalization, apply_date_gate, match_names_exact, match_names_fuzzy, run_matching_step, run_pipeline, score_addresses_batch
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPE_PATH = Path(__file__).parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
+DATA_DIR = Path(__file__).parent / "data"
+RECIPE_PATH = Path(__file__).parent / "config" / "recipes" / "l1_reconciliation.yaml"
 
 
 def load_datasets():

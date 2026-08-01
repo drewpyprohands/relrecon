@@ -13,8 +13,8 @@ from recipe_echo import read_recipe_tab
 from report import generate_report
 
 REPO = Path(__file__).parent.parent
-DATA_DIR = REPO / "data"
-CONFIG = REPO / "config"
+DATA_DIR = Path(__file__).parent / "data"
+CONFIG = Path(__file__).parent / "config"
 
 EXCLUSIONS = DATA_DIR / "gr_exclusions.csv"
 STOPWORDS = CONFIG / "stopwords.json"

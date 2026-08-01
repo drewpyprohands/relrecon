@@ -14,8 +14,8 @@ from recipe import load_recipe
 from report import sort_by_source_order
 
 SRC = Path(__file__).parent.parent / "src"
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPE = str(Path(__file__).parent / "recipes" / "source_order_test.yaml")
+DATA_DIR = Path(__file__).parent / "data"
+RECIPE = str(Path(__file__).parent / "config" / "recipes" / "source_order_test.yaml")
 
 SOURCE_ORDER = ["V001", "V002", "V003", "V004"]
 MATCHED_HEADER = "vnd_id,l3_fmly_nm,match_step,derived_l1_id"

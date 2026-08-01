@@ -66,7 +66,7 @@ class TestCleanRecipes:
     def test_l1_recipe(self):
         """The real L1 recipe should validate clean."""
         import yaml
-        recipe_path = Path(__file__).parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
+        recipe_path = Path(__file__).parent / "config" / "recipes" / "l1_reconciliation.yaml"
         if not recipe_path.exists():
             pytest.skip("L1 recipe not found")
         with open(recipe_path) as f:

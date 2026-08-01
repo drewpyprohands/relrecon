@@ -23,7 +23,7 @@ from signal_analysis import (
 
 def load_datasets():
     """Load our synthetic CSV datasets."""
-    base = Path(__file__).parent.parent / "data"
+    base = Path(__file__).parent / "data"
     core = pl.read_csv(str(base / "core_parent_export.csv"))
     multi = pl.read_csv(str(base / "tp_multi_pop_dataset.csv"))
     return core, multi

@@ -20,8 +20,8 @@ cd relrecon
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the pipeline against included synthetic data
-python3 -m src --recipe config/recipes/l1_reconciliation.yaml --data data/
+# Run the pipeline against the included test fixture data
+python3 -m src --recipe tests/config/recipes/l1_reconciliation.yaml --data tests/data/
 
 # Output: timestamped xlsx + markdown summary in output/
 
@@ -114,7 +114,7 @@ output:
         header: Dest L3 Name
 ```
 
-See the full recipe at [`config/recipes/l1_reconciliation.yaml`](config/recipes/l1_reconciliation.yaml).
+See the full recipe at [`tests/config/recipes/l1_reconciliation.yaml`](tests/config/recipes/l1_reconciliation.yaml).
 
 To create a new recipe for a different reconciliation problem, copy this YAML and adjust the sources, populations, field mappings, and matching steps. The engine code stays the same.
 

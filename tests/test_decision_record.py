@@ -20,8 +20,8 @@ from recipe import (
 from report import apply_output_computations
 
 SRC = Path(__file__).parent.parent / "src"
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPES = Path(__file__).parent / "recipes"
+DATA_DIR = Path(__file__).parent / "data"
+RECIPES = Path(__file__).parent / "config" / "recipes"
 EXPECTED = Path(__file__).parent / "expected"
 
 RECIPE = str(RECIPES / "decision_record_test.yaml")
@@ -328,7 +328,7 @@ def test_decided_value_is_the_original_not_the_stripped_form():
 # ---------------------------------------------------------------------------
 
 PERM_RECIPE = str(
-    Path(__file__).parent.parent / "config" / "recipes" / "multipop_comparison_rollup.yaml"
+    Path(__file__).parent / "config" / "recipes" / "multipop_comparison_rollup.yaml"
 )
 
 # (row, source, dest, rolled, case, decided, _src) from Issue #93 comment 2.

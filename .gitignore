@@ -5,10 +5,6 @@ benchmarks/results/*
 tests/results/*
 reviews/
 output/
-data/*gleif*
-!data/gleif_test_vendors.csv
-!data/gleif_lei_test.csv
-!data/gleif_rr_test.csv
 
 # Loader cache
 .cache/
