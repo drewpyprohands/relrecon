@@ -56,5 +56,5 @@ output:
   match_mode: best_match
 
 normalization:
-  stopwords: config/stopwords.json
-  aliases: config/aliases.json
+  stopwords: tests/config/stopwords.json
+  aliases: tests/config/aliases.json

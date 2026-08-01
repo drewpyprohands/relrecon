@@ -21,8 +21,8 @@ from recipe import (
 from report import apply_output_computations
 
 SRC = Path(__file__).parent.parent / "src"
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPES = Path(__file__).parent / "recipes"
+DATA_DIR = Path(__file__).parent / "data"
+RECIPES = Path(__file__).parent / "config" / "recipes"
 EXPECTED = Path(__file__).parent / "expected"
 
 RECIPE = str(RECIPES / "groups_test.yaml")

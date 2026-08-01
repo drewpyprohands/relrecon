@@ -16,7 +16,7 @@ from signal_excel import generate_signal_excel
 
 def _load_multi():
     """Load multi-pop test dataset."""
-    return pl.read_csv(str(Path(__file__).parent.parent / "data" / "tp_multi_pop_dataset.csv"))
+    return pl.read_csv(str(Path(__file__).parent / "data" / "tp_multi_pop_dataset.csv"))
 
 
 def _run_analysis(columns=None):
@@ -408,27 +408,26 @@ def test_empty_results(tmp_path):
 # CLI integration tests
 # ---------------------------------------------------------------------------
 
-def test_cli_xlsx_format():
+def test_cli_xlsx_format(tmp_path):
     """CLI --signal-format xlsx should produce Excel output."""
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/tp_multi_pop_dataset.csv",
+        [sys.executable, "-m", "src", "--analyze", str(Path(__file__).parent / "data" / "tp_multi_pop_dataset.csv"),
          "--columns", "l3_fmly_nm", "--signal-format", "xlsx",
-         "--signal-output", "output/cli_test.xlsx", "--top", "10"],
+         "--signal-output", str(tmp_path / "cli_test.xlsx"), "--top", "10"],
         capture_output=True, text=True,
         cwd=str(Path(__file__).parent.parent),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     assert "Excel report saved" in result.stdout
-    assert Path("output/cli_test.xlsx").exists() or \
-           Path(Path(__file__).parent.parent / "output" / "cli_test.xlsx").exists()
+    assert (tmp_path / "cli_test.xlsx").exists()
 
 
-def test_cli_both_format():
+def test_cli_both_format(tmp_path):
     """CLI --signal-format both should produce Excel and markdown."""
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/tp_multi_pop_dataset.csv",
+        [sys.executable, "-m", "src", "--analyze", str(Path(__file__).parent / "data" / "tp_multi_pop_dataset.csv"),
          "--columns", "l3_fmly_nm", "--signal-format", "both",
-         "--signal-output", "output/cli_both_test", "--top", "5"],
+         "--signal-output", str(tmp_path / "cli_both_test"), "--top", "5"],
         capture_output=True, text=True,
         cwd=str(Path(__file__).parent.parent),
     )
@@ -437,10 +436,10 @@ def test_cli_both_format():
     assert "Markdown report saved" in result.stdout
 
 
-def test_cli_default_format_is_md():
+def test_cli_default_format_is_md(tmp_path):
     """CLI without --signal-format should default to markdown (stdout)."""
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/tp_multi_pop_dataset.csv",
+        [sys.executable, "-m", "src", "--analyze", str(Path(__file__).parent / "data" / "tp_multi_pop_dataset.csv"),
          "--columns", "l3_fmly_nm", "--top", "3"],
         capture_output=True, text=True,
         cwd=str(Path(__file__).parent.parent),
@@ -449,10 +448,10 @@ def test_cli_default_format_is_md():
     assert "Signal Analysis Report" in result.stdout
 
 
-def test_cli_md_includes_new_sections():
+def test_cli_md_includes_new_sections(tmp_path):
     """CLI markdown output should include new analysis sections."""
     result = subprocess.run(
-        [sys.executable, "-m", "src", "--analyze", "data/tp_multi_pop_dataset.csv",
+        [sys.executable, "-m", "src", "--analyze", str(Path(__file__).parent / "data" / "tp_multi_pop_dataset.csv"),
          "--columns", "l3_fmly_nm", "--top", "5"],
         capture_output=True, text=True,
         cwd=str(Path(__file__).parent.parent),

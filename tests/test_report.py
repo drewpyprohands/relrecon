@@ -21,8 +21,8 @@ from recipe import load_recipe
 from matching import run_pipeline
 from report import generate_report, run_and_report
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPE_PATH = Path(__file__).parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
+DATA_DIR = Path(__file__).parent / "data"
+RECIPE_PATH = Path(__file__).parent / "config" / "recipes" / "l1_reconciliation.yaml"
 
 
 def _get_pipeline_result():
@@ -221,12 +221,9 @@ def test_tpty_assm_nm_included():
         assert r["passed"], f"Failed: {r}"
 
 
-def test_end_to_end():
-    """End-to-end: run_and_report() with actual recipe, output to tests/results/."""
-    out_path = str(Path(__file__).parent / "results" / "report_output" / "l1_reconciliation_report.xlsx")
-
-    # Clean up any prior run
-    Path(out_path).unlink(missing_ok=True)
+def test_end_to_end(tmp_path):
+    """End-to-end report writes to the per-test temporary directory."""
+    out_path = str(tmp_path / "l1_reconciliation_report.xlsx")
 
     path = run_and_report(str(RECIPE_PATH), base_dir=str(DATA_DIR), output_path=out_path)
 

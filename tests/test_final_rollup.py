@@ -23,8 +23,8 @@ from recipe import (  # noqa: E402
 )
 from report import apply_column_mapping, write_raw_data  # noqa: E402
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
-RECIPE_DIR = os.path.join(os.path.dirname(__file__), "..", "config", "recipes")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+RECIPE_DIR = os.path.join(os.path.dirname(__file__), "config", "recipes")
 
 
 def _load(name):

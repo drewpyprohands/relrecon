@@ -17,8 +17,8 @@ from recipe import (
     validate_fields, format_validation_summary, RecipeValidationError,
 )
 
-RECIPE_PATH = Path(__file__).resolve().parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+RECIPE_PATH = Path(__file__).resolve().parent / "config" / "recipes" / "l1_reconciliation.yaml"
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def _load_test_context(recipe=None):

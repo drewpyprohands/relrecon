@@ -21,8 +21,8 @@ from recipe import load_recipe, validate_recipe
 from report import apply_column_mapping, write_unmatched_export
 
 SRC = Path(__file__).parent.parent / "src"
-DATA_DIR = Path(__file__).parent.parent / "data"
-RECIPE_PATH = Path(__file__).parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
+DATA_DIR = Path(__file__).parent / "data"
+RECIPE_PATH = Path(__file__).parent / "config" / "recipes" / "l1_reconciliation.yaml"
 
 
 def _load_main():

@@ -10,8 +10,8 @@ import polars as pl
 from matching import run_pipeline
 from recipe import load_recipe
 
-RECIPE_PATH = Path(__file__).resolve().parent.parent / "config" / "recipes" / "l1_reconciliation.yaml"
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+RECIPE_PATH = Path(__file__).resolve().parent / "config" / "recipes" / "l1_reconciliation.yaml"
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def _load_with_threshold(threshold=None):

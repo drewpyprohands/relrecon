@@ -3,8 +3,8 @@ description: >
   Trace issues with specific matching
 
 normalization:
-  aliases: config/aliases.json
-  stopwords: config/stopwords.json
+  aliases: tests/config/aliases.json
+  stopwords: tests/config/stopwords.json
 
 sources:
   source_data:
