@@ -9,6 +9,10 @@ jsonschema
 # HTTP loader (remote file downloads)
 httpx
 
+# Optional SQL loaders
+trino==0.338.0
+psycopg2-binary==2.9.12
+
 # Optional: international address parsing (better accuracy, requires C library)
 # Install libpostal first: see docs/implementation-plan.md#libpostal-installation
 # postal
