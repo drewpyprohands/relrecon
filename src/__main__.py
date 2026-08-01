@@ -1,9 +1,9 @@
 """CLI entry point for the relational matching pipeline.
 
 Usage:
-    python -m src --recipe tests/config/recipes/l1_reconciliation.yaml
-    python -m src --recipe tests/config/recipes/l1_reconciliation.yaml --data tests/data/ --output output/report.xlsx
-    python -m src --recipe tests/config/recipes/l1_reconciliation.yaml --no-libpostal
+    python -m src --recipe config/recipes/l1_reconciliation.yaml
+    python -m src --recipe config/recipes/l1_reconciliation.yaml --data data/ --output output/report.xlsx
+    python -m src --recipe config/recipes/l1_reconciliation.yaml --no-libpostal
 """
 
 import argparse
@@ -448,13 +448,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--recipe",
-        default="tests/config/recipes/l1_reconciliation.yaml",
-        help="Path to recipe YAML/JSON (default: tests/config/recipes/l1_reconciliation.yaml)",
+        default="config/recipes/l1_reconciliation.yaml",
+        help="Path to recipe YAML/JSON (default: config/recipes/l1_reconciliation.yaml)",
     )
     parser.add_argument(
         "--data",
-        default="tests/data",
-        help="Base directory for data files referenced in the recipe (default: tests/data)",
+        default="data",
+        help="Base directory for data files referenced in the recipe (default: data)",
     )
     parser.add_argument(
         "--output",

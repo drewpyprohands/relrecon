@@ -1,0 +1,151 @@
+name: Cross-Step Rollup
+description: >
+  Reproduces the cross-step rollup problem and its fix. V001 and V002/V003
+  belong to the same L1 entity (Company XYZ Holdings) but resolve to different
+  supplier IDs because V001 matches at L3-exact (S1013) while V002/V003 reach a
+  match only at L1 (S0500). The per-step tie-breaker cannot unify them;
+  output.final_rollup does, as a terminal group aggregation.
+
+sources:
+  source_data:
+    file: crossstep_source.csv
+    type: multi_population
+  dest_data:
+    file: crossstep_dest.csv
+    type: trusted_reference
+
+populations:
+  source_pop:
+    source: source_data
+    record_key: vendor_id
+    filter: []
+
+steps:
+  - name: Exact Name Match L3
+    source: source_pop
+    destination: dest_data
+    match_fields:
+      - source: l3_fmly_nm
+        destination: vnd_name
+        method: exact
+        tiers: [raw]
+    inherit:
+      - source: supplier_id
+        as: derived_supplier_id
+      - source: supplier_nm
+        as: derived_supplier_nm
+      - source: vnd_name
+        as: derived_dest_name
+
+  - name: Exact Name Match L1
+    source: source_pop
+    destination: dest_data
+    match_fields:
+      - source: parent_name
+        destination: supplier_nm
+        method: exact
+        tiers: [raw]
+    inherit:
+      - source: supplier_id
+        as: derived_supplier_id
+      - source: supplier_nm
+        as: derived_supplier_nm
+      - source: vnd_name
+        as: derived_dest_name
+
+  - name: Fuzzy Name Match L3
+    source: source_pop
+    destination: dest_data
+    match_fields:
+      - source: l3_fmly_nm
+        destination: vnd_name
+        method: fuzzy
+        threshold: 70
+        scorer: token_sort_ratio
+        tiers: [raw]
+    inherit:
+      - source: supplier_id
+        as: derived_supplier_id
+      - source: supplier_nm
+        as: derived_supplier_nm
+      - source: vnd_name
+        as: derived_dest_name
+
+  - name: Fuzzy Name Match L1
+    source: source_pop
+    destination: dest_data
+    match_fields:
+      - source: parent_name
+        destination: supplier_nm
+        method: fuzzy
+        threshold: 70
+        scorer: token_sort_ratio
+        tiers: [raw]
+    inherit:
+      - source: supplier_id
+        as: derived_supplier_id
+      - source: supplier_nm
+        as: derived_supplier_nm
+      - source: vnd_name
+        as: derived_dest_name
+
+output:
+  format: xlsx
+  summary: [md]
+  match_mode: best_match
+  tie_breaker:
+    column: supplier_id
+    strip_prefix: alpha
+    order: asc
+  final_rollup:
+    # Dest-identity bucket: roll every family member (any step) to the family
+    # min by destination L1 name. Zeta -> S0100 including the orphan V012.
+    - steps: [Exact Name Match L3, Exact Name Match L1, Fuzzy Name Match L3, Fuzzy Name Match L1]
+      group_key: derived_supplier_nm
+      target: derived_supplier_id
+      strip_prefix: alpha
+      order: asc
+      write_to: rolled_supplier_id
+    # Tier-name bucket: group within L3 dest name, L3 steps only. Deliberate
+    # under-merge -- {V010,V012} -> S0200, V011 keeps S0100.
+    - steps: [Exact Name Match L3, Fuzzy Name Match L3]
+      group_key: derived_dest_name
+      target: derived_supplier_id
+      strip_prefix: alpha
+      order: asc
+      write_to: rolled_supplier_id_l3
+  columns:
+    matched:
+      - field: vendor_id
+        header: Source ID
+      - field: parent_name
+        header: Source L1 Name
+      - field: l3_fmly_nm
+        header: Source L3 Name
+      - field: match_step
+        header: Match Source
+      - field: match_tier
+        header: Tier
+      - field: name_score
+        header: Name Score
+      - field: derived_dest_name
+        header: Dest L3 Name
+      - field: derived_supplier_nm
+        header: Dest L1 Name
+      - field: derived_supplier_id
+        header: Supplier ID (selected)
+      - field: rolled_supplier_id
+        header: Rolled SID (dest-identity)
+      - field: rolled_supplier_id_changed
+        header: Rolled Changed
+      - field: rolled_supplier_id_l3
+        header: Rolled SID (L3 name)
+      - field: rolled_supplier_id_l3_changed
+        header: Rolled L3 Changed
+    analysis:
+      - field: vendor_id
+        header: Source ID
+      - field: l3_fmly_nm
+        header: Source L3 Name
+      - field: reason_code
+        header: Reason

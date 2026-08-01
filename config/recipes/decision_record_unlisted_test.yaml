@@ -1,0 +1,53 @@
+name: Decision Record Unlisted Test
+description: >
+  Control for Issue #93 no-auto-append: both features configured, neither
+  output column listed in output.columns.matched. The computed columns must
+  be absent from every artifact.
+
+sources:
+  src:
+    file: dr_source.csv
+  dst:
+    file: dr_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw, clean]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+      - source: dst_revenue
+        as: dst_revenue
+
+output:
+  format: csv
+  matched_unmatched: [merged, separate]
+  match_mode: best_match
+  decision_record:
+    candidates: [derived_l1_id, src_l1_id]
+    write_to: final_l1_id
+  compare_columns:
+    - left: src_revenue
+      right: dst_revenue
+      output: revenue_cmp
+  columns:
+    matched:
+      - field: vnd_id
+        header: vnd_id
+      - field: match_step
+        header: match_step
+    analysis:
+      - field: vnd_id
+        header: vnd_id

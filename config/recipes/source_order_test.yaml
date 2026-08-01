@@ -1,0 +1,64 @@
+name: Source Order Test
+description: >
+  Match completion order deliberately differs from source input order
+  (Issue #86). Step 1 matches V003 by alias; step 2 matches V001/V002 by
+  name, so the resolved matched frame is V003, V001, V002. Output must be
+  V001, V002, V003. V004 never matches.
+
+sources:
+  src:
+    file: so_source.csv
+  dst:
+    file: so_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Alias L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_alias_nm
+        method: exact
+        tiers: [raw]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+
+output:
+  format: [csv, parquet]
+  matched_unmatched: [merged, separate]
+  summary: none
+  match_mode: best_match
+  columns:
+    matched:
+      - field: vnd_id
+        header: vnd_id
+      - field: l3_fmly_nm
+        header: l3_fmly_nm
+      - field: match_step
+        header: match_step
+      - field: derived_l1_id
+        header: derived_l1_id
+    analysis:
+      - field: vnd_id
+        header: vnd_id
+      - field: l3_fmly_nm
+        header: l3_fmly_nm

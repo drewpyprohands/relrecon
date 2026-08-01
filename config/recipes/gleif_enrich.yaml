@@ -1,0 +1,167 @@
+# GLEIF LEI Enrichment -- Parent Relationship Dataset
+#
+# Produces an enriched GLEIF LEI dataset with parent relationship columns
+# derived from the Level 2 RR (Relationship Records) dataset.
+#
+# Output schema:
+#   Entity.LegalName           -- from LEI-CDF
+#   LEI                        -- from LEI-CDF
+#   Entity.EntityStatus        -- from LEI-CDF
+#   Registration.RegistrationStatus -- from LEI-CDF
+#   LEI_Parent                 -- parent legal name (resolved from RR + LEI)
+#   LEI_Parent_Id              -- parent LEI (from RR EndNode)
+#   LEI_Parent_Relationship    -- relationship type (e.g. IS_DIRECTLY_CONSOLIDATED_BY)
+#   LEI_Parent_Status          -- relationship status (e.g. ACTIVE)
+#   Entity.LegalAddress.Country -- entity country (from LEI-CDF)
+#   LEI_Parent_Country          -- parent country (resolved from RR + LEI)
+#
+# Pipeline:
+#   Phase 1: Join LEI -> RR on LEI = StartNode to find parent LEI
+#   Phase 2: Join parent LEI -> LEI to resolve parent legal name
+#   Enriched output: left-join results back onto full LEI source
+#
+# Rows with no parent relationship get null enrichment columns.
+#
+# Data sources: GLEIF Golden Copy (live download, cached 7 days)
+# See docs/gleif_parent_matching_design_note.md for background.
+
+name: GLEIF LEI Enrichment (Parent Relationships)
+description: >
+  Enrich the full GLEIF LEI dataset with direct parent relationship data
+  from Level 2 RR. Output includes every LEI row with parent name, parent
+  LEI, relationship type, and relationship status appended.
+
+sources:
+  gleif_lei:
+    loader: http
+    url_from:
+      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
+      json_path: "data[0].lei2.full_file.csv.url"
+    format: zip
+    columns:
+      - LEI
+      - Entity.LegalName
+      - Entity.LegalAddress.Country
+      - Entity.EntityStatus
+      - Registration.RegistrationStatus
+    cache_ttl: "7d"
+    cache_format: csv
+    timeout: 300
+
+  gleif_rr:
+    loader: http
+    url_from:
+      endpoint: "https://leidata-preview.gleif.org/api/v2/golden-copies/publishes?page=1"
+      json_path: "data[0].rr.full_file.csv.url"
+    format: zip
+    columns:
+      - Relationship.StartNode.NodeID
+      - Relationship.EndNode.NodeID
+      - Relationship.RelationshipType
+      - Relationship.RelationshipStatus
+      - Relationship.EndNode.NodeIDType
+      - Registration.RegistrationStatus
+    cache_ttl: "7d"
+    cache_format: csv
+    timeout: 300
+
+phases:
+  - name: "Phase 1: Match LEI to parent relationship in RR"
+    populations:
+      lei_entities:
+        source: gleif_lei
+        record_key: LEI
+        filter:
+          - field: Entity.EntityStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "ISSUED"
+      rr_direct_parents:
+        source: gleif_rr
+        record_key: Relationship.StartNode.NodeID
+        filter:
+          - field: Relationship.RelationshipType
+            op: eq
+            value: "IS_DIRECTLY_CONSOLIDATED_BY"
+          - field: Relationship.RelationshipStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Relationship.EndNode.NodeIDType
+            op: eq
+            value: "LEI"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "PUBLISHED"
+    steps:
+      - name: Match LEI to parent relationship
+        source: lei_entities
+        destination: rr_direct_parents
+        match_fields:
+          - source: LEI
+            destination: Relationship.StartNode.NodeID
+            method: exact
+            tiers: [raw]
+
+  - name: "Phase 2: Resolve parent LEI to parent name"
+    populations:
+      matched_with_parent:
+        source: _previous_matched
+        record_key: Relationship.EndNode.NodeID
+        filter: []
+      gleif_entities:
+        source: gleif_lei
+        record_key: LEI
+        filter:
+          - field: Entity.EntityStatus
+            op: eq
+            value: "ACTIVE"
+          - field: Registration.RegistrationStatus
+            op: eq
+            value: "ISSUED"
+    steps:
+      - name: Resolve parent LEI to entity name
+        source: matched_with_parent
+        destination: gleif_entities
+        match_fields:
+          - source: Relationship.EndNode.NodeID
+            destination: LEI
+            method: exact
+            tiers: [raw]
+        inherit:
+          - source: Entity.LegalName
+            as: LEI_Parent
+          - source: Entity.LegalAddress.Country
+            as: LEI_Parent_Country
+
+    output:
+      mode: enriched
+      enrich_source: gleif_lei
+      enrich_key: LEI
+      format: csv
+      summary: md
+      columns:
+        matched:
+          ## Child 
+          - field: Entity.LegalName
+            header: Entity.LegalName
+          - field: LEI
+            header: LEI
+          - field: Entity.LegalAddress.Country
+            header: Entity.LegalAddress.Country
+          - field: Entity.EntityStatus
+            header: Entity.EntityStatus
+          - field: Registration.RegistrationStatus
+            header: Registration.RegistrationStatus
+        ## Parent
+          - field: LEI_Parent
+            header: LEI_Parent
+          - field: Relationship.EndNode.NodeID
+            header: LEI_Parent_Id
+          - field: Relationship.RelationshipType
+            header: LEI_Parent_Relationship
+          - field: Relationship.RelationshipStatus
+            header: LEI_Parent_Status
+          - field: LEI_Parent_Country
+            header: LEI_Parent_Country

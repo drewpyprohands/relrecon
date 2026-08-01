@@ -1,0 +1,93 @@
+name: Decision Record Test
+description: >
+  Fixture for output.decision_record + output.compare_columns (Issue #93).
+  V001/V002/V003 exact-match dest; V004 is unmatched. Headers equal field
+  names so matched and merged csv are asserted byte-for-byte.
+
+  Coalesce coverage: V001 first-hit (derived_l1_id), V002 fall-through
+  (whitespace-only derived value), V003 all-candidates-null, V004
+  unmatched merged fall-through (derived_l1_id absent -> src_l1_id).
+
+  Compare coverage: the two entries are mirror images, so four rows carry
+  all six input conditions -- V001 higher/lower, V002 same/same,
+  V003 left-null/right-null, V004 both-null/both-null.
+
+  Float parsing: V005 (9.5 vs 10.5) compares numerically, not as text;
+  V006 (2.50 vs 2.5) reads same; V007 (9.5 vs "12-34") has one unparseable
+  side and falls back to lexicographic, where "9.5" sorts above "12-34"
+  even though 9.5 is the smaller number.
+
+sources:
+  src:
+    file: dr_source.csv
+  dst:
+    file: dr_dest.csv
+
+populations:
+  pop1:
+    source: src
+    record_key: vnd_id
+    filter: []
+
+steps:
+  - name: Exact L3
+    source: pop1
+    destination: dst
+    match_fields:
+      - source: l3_fmly_nm
+        destination: dst_l3_nm
+        method: exact
+        tiers: [raw, clean]
+    inherit:
+      - source: dst_l1_id
+        as: derived_l1_id
+      - source: dst_revenue
+        as: dst_revenue
+
+output:
+  format: csv
+  matched_unmatched: [merged, separate]
+  match_mode: best_match
+  decision_record:
+    candidates: [derived_l1_id, src_l1_id]
+    write_to: final_l1_id
+  compare_columns:
+    - left: src_revenue
+      right: dst_revenue
+      output: revenue_cmp
+    - left: dst_revenue
+      right: src_revenue
+      output: revenue_cmp_inv
+    # Same alpha-prefixed pair twice: default strip parses S1001/P3100 as
+    # 1001 vs 3100 (numeric), strip_prefix none compares "S1001" vs "P3100"
+    # lexicographically and flips the verdict.
+    - left: src_l1_id
+      right: derived_l1_id
+      output: l1_cmp_alpha
+    - left: src_l1_id
+      right: derived_l1_id
+      output: l1_cmp_none
+      strip_prefix: none
+  columns:
+    matched:
+      - field: vnd_id
+        header: vnd_id
+      - field: match_step
+        header: match_step
+      - field: final_l1_id
+        header: final_l1_id
+      - field: final_l1_id_src
+        header: final_l1_id_src
+      - field: revenue_cmp
+        header: revenue_cmp
+      - field: revenue_cmp_inv
+        header: revenue_cmp_inv
+      - field: l1_cmp_alpha
+        header: l1_cmp_alpha
+      - field: l1_cmp_none
+        header: l1_cmp_none
+    analysis:
+      - field: vnd_id
+        header: vnd_id
+      - field: l3_fmly_nm
+        header: l3_fmly_nm

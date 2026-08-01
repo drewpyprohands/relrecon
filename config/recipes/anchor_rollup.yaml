@@ -1,0 +1,52 @@
+name: Anchor Rollup Test
+description: >
+  Plain name match brings A/B/C/D into the matched set; final_rollup groups by
+  grp and rolls supplier_id to the group min. Anchor case: the group's
+  minimum-holder (B, S100) retains its own id after rollup.
+
+sources:
+  src:
+    file: selfpop_anchor.csv
+    type: multi_population
+  dst:
+    file: anchor_dest.csv
+    type: trusted_reference
+
+populations:
+  src_pop:
+    source: src
+    record_key: vendor_id
+    filter: []
+
+steps:
+  - name: Name Match
+    source: src_pop
+    destination: dst
+    match_fields:
+      - source: co_name
+        destination: dst_name
+        method: exact
+        tiers: [raw]
+
+output:
+  format: csv
+  summary: none
+  final_rollup:
+    - steps: [Name Match]
+      group_key: grp
+      target: supplier_id
+      strip_prefix: alpha
+      order: asc
+      write_to: rolled_supplier_id
+  columns:
+    matched:
+      - field: vendor_id
+        header: ID
+      - field: grp
+        header: Group
+      - field: supplier_id
+        header: Own SID
+      - field: rolled_supplier_id
+        header: Rolled SID
+      - field: rolled_supplier_id_changed
+        header: Changed

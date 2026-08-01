@@ -1,0 +1,60 @@
+name: Same-Population Matching Example
+description: >
+  Demonstrates matching a population against itself to find duplicate/related
+  records. Self-matches (same record_key) are automatically excluded.
+  Records with no cross-match land in Unmatched.
+
+sources:
+  test_data:
+    file: same_pop_test.csv
+    type: multi_population
+
+populations:
+  all_records:
+    source: test_data
+    record_key: vendor_id
+    filter: []
+
+steps:
+  # Exact L3 name match within the same population
+  - name: Exact L3 Self-Match
+    source: all_records
+    destination: all_records
+    match_fields:
+      - source: l3_fmly_nm
+        destination: l3_fmly_nm
+        method: exact
+        tiers: [raw, clean]
+
+  # Fuzzy L3 name match for near-duplicates (Inc vs Incorporated, etc.)
+  - name: Fuzzy L3 Self-Match
+    source: all_records
+    destination: all_records
+    match_fields:
+      - source: l3_fmly_nm
+        destination: l3_fmly_nm
+        method: fuzzy
+        threshold: 75
+        scorer: token_sort_ratio
+        tiers: [raw, clean]
+    address_support:
+      source: [hq_addr1, hq_addr2]
+      destination: [hq_addr1, hq_addr2]
+      parser: auto
+      tiers: [clean]
+      weights:
+        street_name: 0.6
+    inherit:
+      - source: l1_fmly_nm
+        as: derived_l1_name
+      - source: tpty_l1_id
+        as: derived_l1_id
+
+output:
+  format: xlsx
+  summary: [md, xlsx]
+  match_mode: best_match
+
+normalization:
+  stopwords: config/stopwords.json
+  aliases: config/aliases.json

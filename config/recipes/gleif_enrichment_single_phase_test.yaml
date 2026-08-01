@@ -1,0 +1,70 @@
+# GLEIF LEI Enrichment -- Single Phase Test
+#
+# Tests enriched output mode in a single-phase recipe.
+# Matches LEI records against RR to find parent LEI.
+# Output is the full LEI source with parent_lei column added.
+
+name: GLEIF Enrichment Single Phase Test
+description: Single-phase enrichment -- LEI to RR parent match
+
+sources:
+  gleif_lei:
+    file: gleif_lei_test.csv
+
+  gleif_rr:
+    file: gleif_rr_test.csv
+
+populations:
+  lei_entities:
+    source: gleif_lei
+    record_key: LEI
+    filter:
+      - field: Entity.EntityStatus
+        op: eq
+        value: "ACTIVE"
+      - field: Registration.RegistrationStatus
+        op: eq
+        value: "ISSUED"
+  rr_direct_parents:
+    source: gleif_rr
+    record_key: Relationship.StartNode.NodeID
+    filter:
+      - field: Relationship.RelationshipType
+        op: eq
+        value: "IS_DIRECTLY_CONSOLIDATED_BY"
+      - field: Relationship.RelationshipStatus
+        op: eq
+        value: "ACTIVE"
+      - field: Relationship.EndNode.NodeIDType
+        op: eq
+        value: "LEI"
+      - field: Registration.RegistrationStatus
+        op: eq
+        value: "PUBLISHED"
+
+steps:
+  - name: Match LEI to parent relationship
+    source: lei_entities
+    destination: rr_direct_parents
+    match_fields:
+      - source: LEI
+        destination: Relationship.StartNode.NodeID
+        method: exact
+        tiers: [raw]
+
+output:
+  mode: enriched
+  enrich_source: gleif_lei
+  enrich_key: LEI
+  format: csv
+  summary: none
+  columns:
+    matched:
+      - field: LEI
+        header: LEI
+      - field: Entity.LegalName
+        header: Legal Name
+      - field: Entity.LegalAddress.Country
+        header: Country
+      - field: Relationship.EndNode.NodeID
+        header: Parent LEI
