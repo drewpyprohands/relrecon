@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from address import score_address_pair, score_address_multi_tier, build_variants
+from address import build_variants, score_address_multi_tier, score_address_pair
 
 
 class TestNoInternalRounding:
@@ -89,6 +89,7 @@ class TestRoundingBugRegression:
         """Run all comparisons manually and verify score_address_pair
         picks the one with the highest raw weighted score."""
         from rapidfuzz import fuzz as rfuzz
+
         from address import parse_address
 
         src = build_variants(
@@ -141,6 +142,7 @@ class TestNameScoreNoRounding:
     def test_fuzzy_name_score_precision(self):
         """Fuzzy matching should preserve full score precision."""
         import polars as pl
+
         from matching import match_names_fuzzy
 
         src_df = pl.DataFrame({

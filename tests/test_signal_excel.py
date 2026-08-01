@@ -7,9 +7,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
+import pytest
+
 from signal_analysis import (
-    analyze_dataset, top_ngrams, singleton_tokens, near_duplicate_tokens,
-    token_position_frequency, token_length_distribution, numeric_token_ratio,
+    analyze_dataset,
+    near_duplicate_tokens,
+    numeric_token_ratio,
+    singleton_tokens,
+    token_length_distribution,
+    token_position_frequency,
+    top_ngrams,
 )
 from signal_excel import generate_signal_excel
 
@@ -45,7 +52,7 @@ def test_top_trigrams_raw():
     df = _load_multi()
     trigrams = top_ngrams(df["l3_fmly_nm"], tier="raw", n_gram=3, n=10)
     assert len(trigrams) > 0
-    for gram, count in trigrams:
+    for gram, _count in trigrams:
         parts = gram.split(" ")
         assert len(parts) == 3, f"Expected 3 words in trigram: {gram}"
 
@@ -55,18 +62,15 @@ def test_top_bigrams_clean():
     df = _load_multi()
     bigrams = top_ngrams(df["l3_fmly_nm"], tier="clean", n_gram=2, n=10)
     assert len(bigrams) > 0
-    for gram, count in bigrams:
+    for gram, _count in bigrams:
         assert gram == gram.lower(), f"Expected lowercase bigram: {gram}"
 
 
 def test_top_ngrams_invalid_tier():
     """Ngrams with invalid tier should raise ValueError."""
     df = _load_multi()
-    try:
+    with pytest.raises(ValueError):
         top_ngrams(df["l3_fmly_nm"], tier="normalized", n_gram=2)
-        assert False, "Expected ValueError"
-    except ValueError:
-        pass
 
 
 def test_analyze_column_has_ngrams():

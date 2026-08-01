@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import polars as pl
+
 from matching import match_names_exact, match_names_fuzzy
 
 

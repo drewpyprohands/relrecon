@@ -127,9 +127,9 @@ def bench_correctness():
     assert r10["vendor_id"].to_list() == rf["vendor_id"].to_list(), "chunk=10 vendor_ids differ"
 
     print(f"  Matched rows: {rf.height}/{source_df.height}")
-    print(f"  chunk=1:     PASS (identical)")
-    print(f"  chunk=10:    PASS (identical)")
-    print(f"  chunk=full:  PASS (baseline)")
+    print("  chunk=1:     PASS (identical)")
+    print("  chunk=10:    PASS (identical)")
+    print("  chunk=full:  PASS (baseline)")
     print()
 
 
@@ -244,14 +244,14 @@ def bench_gleif_scale():
     theory_mb = (12000 * 100000 * 4) / 1024 / 1024  # Full matrix
     chunk_mb = (1000 * 100000 * 4) / 1024 / 1024    # Per-chunk
 
-    print(f"  Size: 12,000 x 100,000")
+    print("  Size: 12,000 x 100,000")
     print(f"  Time: {elapsed:.1f}s")
     print(f"  Peak memory: {peak_mb:.1f} MB")
     print(f"  Full matrix would be: {theory_mb:.0f} MB ({theory_mb/1024:.1f} GB)")
     print(f"  Chunk ceiling: {chunk_mb:.0f} MB")
     print(f"  Memory savings: {theory_mb/max(peak_mb, 1):.1f}x")
     print(f"  Matched: {result.height}/{source_df.height}")
-    print(f"  Tiers: raw + clean")
+    print("  Tiers: raw + clean")
 
     matching._CDIST_CHUNK_SIZE = _CDIST_CHUNK_SIZE
     print()

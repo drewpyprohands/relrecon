@@ -14,8 +14,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
-from recipe import load_recipe, load_source, filter_population, build_filter_expr, validate_recipe
-from matching import _load_normalization, apply_date_gate, match_names_exact, match_names_fuzzy, run_matching_step, run_pipeline, score_addresses_batch
+
+from matching import (
+    _load_normalization,
+    apply_date_gate,
+    match_names_exact,
+    match_names_fuzzy,
+    run_matching_step,
+    run_pipeline,
+    score_addresses_batch,
+)
+from recipe import (
+    filter_population,
+    load_recipe,
+    validate_recipe,
+)
 
 DATA_DIR = Path(__file__).parent / "data"
 RECIPE_PATH = Path(__file__).parent / "config" / "recipes" / "l1_reconciliation.yaml"
@@ -401,7 +414,7 @@ def test_clean_column_uses_shared_normalize():
     python_cleaned = [py_clean(v) for v in test_values]
 
     results = []
-    for i, (p_val, py_val) in enumerate(zip(polars_cleaned, python_cleaned)):
+    for i, (p_val, py_val) in enumerate(zip(polars_cleaned, python_cleaned, strict=True)):
         results.append({
             "check": f"row_{i}_matches",
             "passed": p_val == py_val,
@@ -971,7 +984,7 @@ def run_all():
         "test_date_gate_strict": test_date_gate_strict(),
         "test_name_match_raw": test_name_match_raw(),
         "test_name_match_clean_superset": test_name_match_clean_superset(),
-        "test_name_match_no_normalized": test_name_match_no_normalized(),
+        "test_l1_recipe_no_normalized_names": test_l1_recipe_no_normalized_names(),
         "test_full_pipeline": test_full_pipeline(),
         "test_step_priority": test_step_priority(),
         "test_garbage_excluded": test_garbage_excluded(),

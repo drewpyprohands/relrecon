@@ -11,10 +11,14 @@ from pathlib import Path
 # Add src/ to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import polars as pl
 from recipe import (
-    load_recipe, load_source, filter_population, build_filter_expr,
-    validate_fields, format_validation_summary, RecipeValidationError,
+    RecipeValidationError,
+    build_filter_expr,
+    filter_population,
+    format_validation_summary,
+    load_recipe,
+    load_source,
+    validate_fields,
 )
 
 RECIPE_PATH = Path(__file__).resolve().parent / "config" / "recipes" / "l1_reconciliation.yaml"
@@ -207,8 +211,9 @@ def test_filter_field_typo_is_error():
     # Filter field validation happens in validate_fields too
     assert len(errors) == 0 or len(warnings) >= 1  # Filter is warning-level in validate_fields
     # But the real check is that run_pipeline catches it before Polars explodes
-    from matching import run_pipeline
     import pytest
+
+    from matching import run_pipeline
     with pytest.raises(RecipeValidationError, match="filter field"):
         run_pipeline(recipe, str(DATA_DIR))
 

@@ -15,9 +15,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
+
 from signal_analysis import (
-    detect_column_type, top_tokens, suggest_stopwords,
-    suggest_aliases, data_quality_summary, analyze_column, analyze_dataset,
+    analyze_column,
+    analyze_dataset,
+    data_quality_summary,
+    detect_column_type,
+    suggest_aliases,
+    suggest_stopwords,
+    top_tokens,
 )
 
 

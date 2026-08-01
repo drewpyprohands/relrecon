@@ -17,8 +17,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
-from recipe import load_recipe
+
 from matching import run_pipeline
+from recipe import load_recipe
 from report import generate_report, run_and_report
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -308,6 +309,7 @@ def test_all_matches_dest_columns():
     """
     import copy
     import tempfile
+
     from openpyxl import load_workbook
 
     recipe = load_recipe(str(RECIPE_PATH))
@@ -347,6 +349,7 @@ def test_all_matches_dest_columns():
 def test_recipe_driven_columns():
     """Recipe with output.columns should use those instead of hardcoded defaults."""
     import tempfile
+
     from openpyxl import load_workbook
 
     recipe = load_recipe(str(RECIPE_PATH))
@@ -381,6 +384,7 @@ def test_no_recipe_columns_uses_defaults():
     """Recipe without output.columns should use hardcoded defaults."""
     import copy
     import tempfile
+
     from openpyxl import load_workbook
 
     recipe = load_recipe(str(RECIPE_PATH))
@@ -406,6 +410,7 @@ def test_recipe_columns_no_address():
     """Recipe without address columns should produce report without them."""
     import copy
     import tempfile
+
     from openpyxl import load_workbook
 
     recipe = load_recipe(str(RECIPE_PATH))
@@ -447,6 +452,7 @@ def test_recipe_columns_all_matches_coalesce():
     """Recipe-driven columns should coalesce variants in all_matches mode."""
     import copy
     import tempfile
+
     from openpyxl import load_workbook
 
     recipe = load_recipe(str(RECIPE_PATH))

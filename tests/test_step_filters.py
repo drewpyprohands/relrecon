@@ -14,13 +14,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
+
 from matching import (
-    _normalize_step_filters,
     _apply_step_filter,
+    _normalize_step_filters,
     run_matching_step,
     run_pipeline,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test: date_gate normalization

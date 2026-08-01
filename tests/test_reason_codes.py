@@ -12,7 +12,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import copy
+
 import polars as pl
+
 from matching import run_pipeline
 from recipe import load_recipe
 
@@ -75,7 +77,9 @@ def test_addr_below_threshold_reason():
 def test_reason_codes_in_report():
     """Reason codes should appear in the Analysis tab of the Excel report."""
     import tempfile
+
     from openpyxl import load_workbook
+
     from report import generate_report
 
     r = load_recipe(str(RECIPE_PATH))

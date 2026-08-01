@@ -6,8 +6,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import copy
+
 import polars as pl
-from matching import run_matching_step, run_pipeline
+
+from matching import run_pipeline
 from recipe import load_recipe
 
 RECIPE_PATH = Path(__file__).resolve().parent / "config" / "recipes" / "l1_reconciliation.yaml"

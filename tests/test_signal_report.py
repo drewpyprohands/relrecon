@@ -1,13 +1,12 @@
 """Tests for signal analysis report formatter and CLI integration."""
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from signal_report import format_report
-
 
 DATA_DIR = Path(__file__).parent / "data"
 

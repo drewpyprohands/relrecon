@@ -10,8 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import polars as pl
-import numpy as np
-from matching import match_names_exact, _tb_sort_key_expr
+
+from matching import _tb_sort_key_expr
 
 
 def _make_matched(source_df, dest_df):

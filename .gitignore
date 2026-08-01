@@ -5,7 +5,7 @@ benchmarks/results/*
 tests/results/*
 reviews/
 output/
-
+.venv/
 # Loader cache
 .cache/
 test_baselines/

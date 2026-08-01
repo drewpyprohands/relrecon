@@ -12,13 +12,12 @@ import respx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from loaders import (
-    dispatch_loader,
+    _cache_ext,
     _detect_format,
     _extract_from_zip,
-    _cache_ext,
     _resolve_json_path,
+    dispatch_loader,
 )
-
 
 # ---------------------------------------------------------------------------
 # Format detection

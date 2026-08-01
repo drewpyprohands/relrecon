@@ -1,13 +1,18 @@
 # Core dependencies
-polars
-rapidfuzz
-numpy
-openpyxl
-pyyaml
-jsonschema
+polars==1.42.1
+rapidfuzz==3.14.5
+numpy==2.2.6
+openpyxl==3.1.5
+PyYAML==6.0.3
+jsonschema==4.26.0
+defusedxml==0.7.1
 
 # HTTP loader (remote file downloads)
-httpx
+httpx==0.28.1
+
+# Optional SQL loaders
+trino==0.338.0
+psycopg2-binary==2.9.12
 
 # Optional: international address parsing (better accuracy, requires C library)
 # Install libpostal first: see docs/implementation-plan.md#libpostal-installation
