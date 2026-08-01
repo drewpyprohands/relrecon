@@ -909,7 +909,6 @@ def test_normalization_scoping():
 
     for r in results:
         assert r["passed"], f"Failed: {r}"
-    return results
 
 
 def test_step_exclusion():
@@ -960,7 +959,6 @@ def test_step_exclusion():
 
     for r in results:
         assert r["passed"], f"Failed: {r}"
-    return results
 
 
 def run_all():
