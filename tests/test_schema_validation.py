@@ -1,8 +1,9 @@
 """Tests for JSON Schema-based recipe validation (Issue #61)."""
 
 import copy
-import pytest
 from pathlib import Path
+
+import pytest
 
 from src.recipe import validate_recipe
 

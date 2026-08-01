@@ -9,7 +9,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import polars as pl
 
 import matching
-from matching import match_names_exact, match_names_fuzzy, run_matching_step, run_pipeline
+from matching import (
+    match_names_exact,
+    match_names_fuzzy,
+    run_matching_step,
+    run_pipeline,
+)
 
 
 def _recipe(tmp_path, source_rows, destination_rows, match_field):

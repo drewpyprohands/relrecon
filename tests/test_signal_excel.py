@@ -7,9 +7,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import polars as pl
+
 from signal_analysis import (
-    analyze_dataset, top_ngrams, singleton_tokens, near_duplicate_tokens,
-    token_position_frequency, token_length_distribution, numeric_token_ratio,
+    analyze_dataset,
+    near_duplicate_tokens,
+    numeric_token_ratio,
+    singleton_tokens,
+    token_length_distribution,
+    token_position_frequency,
+    top_ngrams,
 )
 from signal_excel import generate_signal_excel
 

@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import copy
-import polars as pl
+
 from matching import run_pipeline
 from recipe import load_recipe
 

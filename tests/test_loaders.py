@@ -11,8 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from loaders import _interpolate_env, _load_trino, dispatch_loader, load_file, load_sql
-
+from loaders import _interpolate_env, _load_trino, dispatch_loader, load_file
 
 # ---------------------------------------------------------------------------
 # Env var interpolation
@@ -348,6 +347,7 @@ def test_cache_disabled(tmp_path):
 
 def test_cache_expired(tmp_path):
     import sqlite3
+
     from loaders import _get_cache_path
     db_path = tmp_path / "test.db"
     conn = sqlite3.connect(str(db_path))

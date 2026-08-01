@@ -11,8 +11,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from normalize import (
-    raw, clean, normalized, apply_tier,
-    classify_codepoint, profile_string, normalize_unicode,
+    apply_tier,
+    classify_codepoint,
+    clean,
+    normalize_unicode,
+    normalized,
+    profile_string,
+    raw,
 )
 
 
@@ -392,7 +397,7 @@ def run_all():
     # Print summary only
     print(f"Tests: {passed}/{total} passed ({summary['pass_rate']})")
     if failed_details:
-        print(f"FAILURES:")
+        print("FAILURES:")
         for fd in failed_details:
             print(f"  {fd['test']}: expected={fd.get('expected')}, actual={fd.get('actual')}")
     return summary

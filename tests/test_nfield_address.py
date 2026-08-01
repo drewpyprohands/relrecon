@@ -6,9 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import polars as pl
-from address import build_variants, score_address_pair, score_address_multi_tier
-from matching import score_addresses_batch
 
+from address import build_variants, score_address_multi_tier, score_address_pair
+from matching import score_addresses_batch
 
 # ---------------------------------------------------------------------------
 # build_variants with 1, 2, 3, 4 fields

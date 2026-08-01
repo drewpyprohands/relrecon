@@ -11,11 +11,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import pytest
 import polars as pl
+import pytest
+
 from matching import match_names_exact, match_names_fuzzy, run_pipeline
 from recipe import RecipeValidationError
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: two source records with same name, different vendor_ids

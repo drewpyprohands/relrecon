@@ -14,9 +14,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from address import (
-    build_variants, classify_tokens, parse_address,
-    score_address_pair, score_address_multi_tier,
     LIBPOSTAL_AVAILABLE,
+    build_variants,
+    classify_tokens,
+    parse_address,
+    score_address_multi_tier,
+    score_address_pair,
 )
 
 

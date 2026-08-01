@@ -1,14 +1,13 @@
 """Tests for run summary generation (Issue #53)."""
 
-import polars as pl
-import pytest
+import sys
 from pathlib import Path
 
-import sys
+import polars as pl
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from summary import generate_summary, generate_mermaid, write_summary_tab
-
+from summary import generate_mermaid, generate_summary, write_summary_tab
 
 # --- Fixtures ---
 
