@@ -128,8 +128,8 @@ class TestGenerateSummary:
         """Step 2 uses filters instead of date_gate."""
         md = generate_summary(_recipe(), _stats(), _matched_df())
         lines = md.split("\n")
-        step_lines = [l for l in lines if l.startswith("| ")]
-        date_mentions = [l for l in step_lines if "< 2yr" in l]
+        step_lines = [line for line in lines if line.startswith("| ")]
+        date_mentions = [line for line in step_lines if "< 2yr" in line]
         assert len(date_mentions) >= 2
 
     def test_cascade_explanation(self):
@@ -231,7 +231,7 @@ class TestGenerateMermaid:
         md = generate_mermaid(_recipe(), _stats(), _matched_df())
         lines = md.split("\n")
         # Should only have one connection from Pop
-        pop_connections = [l for l in lines if l.strip().startswith("Pop -->")]
+        pop_connections = [line for line in lines if line.strip().startswith("Pop -->")]
         assert len(pop_connections) == 1
 
     def test_detailed_mode(self):

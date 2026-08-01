@@ -177,7 +177,6 @@ def test_unicode_normalize():
 def test_normalized_edge_cases():
     """Edge cases for normalized tier."""
     aliases = {"st": "street", "blvd": "boulevard"}
-    stopwords = ["inc", "llc"]
     cases = [
         # None aliases/stopwords should not crash
         ("test value", None, None, "test value"),
