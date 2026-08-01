@@ -1,16 +1,21 @@
 name: CI
 
 on:
-  push:
-    branches-ignore: [main]
   pull_request:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "requirements-ci.txt"
+      - "pyproject.toml"
+      - ".github/workflows/ci.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -26,7 +31,7 @@ jobs:
           cache: pip
           cache-dependency-path: .github/workflows/ci.yml
       - run: python -m pip install ruff==0.16.1
-      - run: ruff check src/
+      - run: ruff check src/ tests/
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -67,13 +72,13 @@ jobs:
           cache: pip
           cache-dependency-path: .github/workflows/ci.yml
 
-      - run: python -m pip install bandit==1.9.4
+      - run: python -m pip install "bandit[toml]==1.9.4"
 
       - name: Bandit report (all severities)
-        run: bandit -r src/ --skip B101 -f txt || true
+        run: bandit -c pyproject.toml -r src/ -f txt || true
 
       - name: Bandit gate (medium+)
-        run: bandit -r src/ -q --skip B101,B112 --severity-level medium
+        run: bandit -c pyproject.toml -r src/ -q --severity-level medium
 
   dep-scan:
     name: Dependency and filesystem scan
@@ -91,7 +96,9 @@ jobs:
       - run: python -m pip install pip-audit==2.10.1
 
       - name: pip-audit
-        run: pip-audit -r requirements.txt --strict --progress-spinner=off
+        run: |
+          pip-audit -r requirements.txt --strict --progress-spinner=off
+          pip-audit -r requirements-ci.txt --strict --progress-spinner=off
 
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
