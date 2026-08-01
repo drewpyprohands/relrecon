@@ -330,7 +330,7 @@ def match_names_fuzzy(source_df: pl.DataFrame, dest_df: pl.DataFrame,
         if dst_renames:
             matched_dst = matched_dst.rename(dst_renames)
 
-        matched = pl.concat([matched_src, matched_dst], how="horizontal")
+        matched = pl.concat([matched_src, matched_dst], how="horizontal", strict=True)
         matched = matched.with_columns(
             pl.Series("name_score", scores),
             pl.lit(tier).alias("match_tier"),

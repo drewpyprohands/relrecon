@@ -134,7 +134,10 @@ def _tokenize_series(series: pl.Series, tier: str = "raw") -> pl.DataFrame:
     s = series.drop_nulls().cast(pl.String)
     if tier == "clean":
         s = s.str.to_lowercase().str.replace_all(r'[,.;:]', '')
-    return s.str.split(" ").explode().to_frame("tok").filter(pl.col("tok") != "")
+    return (
+        s.str.split(" ").explode(empty_as_null=True).to_frame("tok")
+        .filter(pl.col("tok") != "")
+    )
 
 
 def _tokenize_with_index(series: pl.Series, tier: str = "raw") -> pl.DataFrame:
@@ -151,7 +154,7 @@ def _tokenize_with_index(series: pl.Series, tier: str = "raw") -> pl.DataFrame:
     df = s.to_frame("val").with_row_index("row_idx")
     df = df.with_columns(pl.col("val").str.split(" ").alias("tokens"))
     df = df.with_columns(pl.col("tokens").list.len().alias("total_tokens"))
-    df = df.explode("tokens").rename({"tokens": "tok"})
+    df = df.explode("tokens", empty_as_null=True).rename({"tokens": "tok"})
     df = df.filter(pl.col("tok") != "")
 
     # Add position within each row
@@ -484,7 +487,7 @@ def suggest_stopwords(series: pl.Series, col_type: str = "name",
 
     # Explode, count across rows
     row_counts = (
-        per_row_unique.explode()
+        per_row_unique.explode(empty_as_null=True)
         .to_frame("tok")
         .filter(pl.col("tok").is_not_null())
         .group_by("tok").len()
