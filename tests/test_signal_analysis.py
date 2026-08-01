@@ -102,6 +102,17 @@ def test_suggest_stopwords():
         assert r["passed"], f"Failed: {r}"
 
 
+def test_empty_tokens_are_excluded():
+    """Ignore blank token lists while preserving populated tokens."""
+    series = pl.Series("names", ["", "   ", "Acme LLC"])
+
+    assert dict(top_tokens(series, n=10)) == {"Acme": 1, "LLC": 1}
+    assert {item["token"] for item in suggest_stopwords(series, col_type="name")} == {
+        "acme",
+        "llc",
+    }
+
+
 def test_suggest_aliases():
     """Alias suggestions should find case/punctuation variants."""
     _, multi = load_datasets()
