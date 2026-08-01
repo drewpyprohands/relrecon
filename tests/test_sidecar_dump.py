@@ -1,7 +1,6 @@
 """Tests for sidecar file dump tabs in the xlsx report (issue #100)."""
 
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -22,12 +21,6 @@ ALIASES = CONFIG / "aliases.json"
 GROUPS = DATA_DIR / "gr_groups.json"
 
 SIDECAR_TITLES = ["Exclusions", "Stopwords", "Aliases", "Groups"]
-
-
-def _tmp_xlsx():
-    f = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
-    f.close()
-    return f.name
 
 
 def _matched():
@@ -60,13 +53,13 @@ def _sheet_rows(ws):
     ]
 
 
-def _report(recipe, base_dir="."):
-    path = _tmp_xlsx()
+def _report(tmp_path, recipe, base_dir="."):
+    path = tmp_path / "report.xlsx"
     generate_report(_matched(), None, path, recipe=recipe, base_dir=base_dir)
     return load_workbook(path)
 
 
-def test_all_four_sidecars_dumped_in_order():
+def test_all_four_sidecars_dumped_in_order(tmp_path):
     """All four configured -> four tabs, correct order, path + verbatim lines."""
     sources = {
         "Exclusions": EXCLUSIONS,
@@ -74,7 +67,7 @@ def test_all_four_sidecars_dumped_in_order():
         "Aliases": ALIASES,
         "Groups": GROUPS,
     }
-    wb = _report(_recipe(
+    wb = _report(tmp_path, _recipe(
         exclusions=str(EXCLUSIONS), stopwords=str(STOPWORDS),
         aliases=str(ALIASES), groups=str(GROUPS),
     ))
@@ -88,10 +81,10 @@ def test_all_four_sidecars_dumped_in_order():
         assert rows[1:] == src.read_text(encoding="utf-8-sig").splitlines()
 
 
-def test_no_sidecars_leaves_tab_set_unchanged():
+def test_no_sidecars_leaves_tab_set_unchanged(tmp_path):
     """None configured -> no dump tabs; tab set and cells match the baseline."""
     recipe = _recipe()
-    wb = _report(recipe)
+    wb = _report(tmp_path, recipe)
 
     assert not set(wb.sheetnames) & set(SIDECAR_TITLES)
     # xlsx is never byte-stable, so pin the tab set and its cell contents.
@@ -101,18 +94,18 @@ def test_no_sidecars_leaves_tab_set_unchanged():
     assert read_recipe_tab(wb["Recipe"]) == recipe
 
 
-def test_only_groups_configured_adds_only_groups_tab():
+def test_only_groups_configured_adds_only_groups_tab(tmp_path):
     """Partial config -> only that sidecar's tab is added."""
-    wb = _report(_recipe(groups=str(GROUPS)))
+    wb = _report(tmp_path, _recipe(groups=str(GROUPS)))
 
     assert "Groups" in wb.sheetnames
     assert not {"Exclusions", "Stopwords", "Aliases"} & set(wb.sheetnames)
     assert _sheet_rows(wb["Groups"])[0] == str(GROUPS.resolve())
 
 
-def test_sidecar_resolved_relative_to_base_dir():
+def test_sidecar_resolved_relative_to_base_dir(tmp_path):
     """Unqualified path falls back to base_dir, matching the loader convention."""
-    wb = _report(_recipe(groups="gr_groups.json"), base_dir=str(DATA_DIR))
+    wb = _report(tmp_path, _recipe(groups="gr_groups.json"), base_dir=str(DATA_DIR))
 
     rows = _sheet_rows(wb["Groups"])
     assert rows[0] == str(GROUPS.resolve())
@@ -124,7 +117,7 @@ def test_non_utf8_sidecar_skips_only_its_own_tab(capsys, tmp_path):
     bad = tmp_path / "cp1252_exclusions.csv"
     bad.write_bytes(b"step,vnd_id,note\nExact L3,vnd8420,caf\xe9\n")
 
-    wb = _report(_recipe(exclusions=str(bad), aliases=str(ALIASES),
+    wb = _report(tmp_path, _recipe(exclusions=str(bad), aliases=str(ALIASES),
                          groups=str(GROUPS)))
 
     assert "Exclusions" not in wb.sheetnames
@@ -143,7 +136,7 @@ def test_illegal_char_sidecar_never_writes_a_partial_tab(capsys, tmp_path):
     bad = tmp_path / "ctrl_groups.json"
     bad.write_text('{\n  "groups": [],\n  "note": "bad\x07byte"\n}\n')
 
-    wb = _report(_recipe(groups=str(bad), aliases=str(ALIASES)))
+    wb = _report(tmp_path, _recipe(groups=str(bad), aliases=str(ALIASES)))
 
     # The tab must be absent, not present-and-truncated at the bad line.
     assert "Groups" not in wb.sheetnames
@@ -156,9 +149,9 @@ def test_illegal_char_sidecar_never_writes_a_partial_tab(capsys, tmp_path):
     assert "ctrl_groups.json" in warnings[0]
 
 
-def test_unreadable_sidecar_skips_tab_with_warning(capsys):
+def test_unreadable_sidecar_skips_tab_with_warning(capsys, tmp_path):
     """Configured but unreadable -> report still generated, tab absent, one WARN."""
-    wb = _report(_recipe(
+    wb = _report(tmp_path, _recipe(
         groups="no_such_groups.json", aliases=str(ALIASES),
     ))
 

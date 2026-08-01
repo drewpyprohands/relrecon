@@ -5,7 +5,7 @@ Runs signal analysis against our synthetic datasets and validates
 column type detection, token analysis, stopword/alias suggestions,
 and data quality profiling.
 
-Results written to tests/results/signal_analysis_results.json
+Generated config files use pytest's temporary test directory.
 """
 
 import json
@@ -153,10 +153,10 @@ def test_analyze_column():
         assert r["passed"], f"Failed: {r}"
 
 
-def test_analyze_dataset():
+def test_analyze_dataset(tmp_path):
     """Full dataset analysis with config output."""
     _, multi = load_datasets()
-    out_dir = Path(__file__).parent / "results" / "signal_analysis_output"
+    out_dir = tmp_path / "signal_analysis_output"
     result = analyze_dataset(
         multi,
         columns=["l3_fmly_nm", "hq_addr1", "vendor_id"],
