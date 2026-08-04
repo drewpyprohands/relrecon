@@ -1,5 +1,5 @@
 # Core dependencies
-polars==1.42.1
+polars==1.43.2
 rapidfuzz==3.14.5
 numpy==2.2.6
 openpyxl==3.1.5
