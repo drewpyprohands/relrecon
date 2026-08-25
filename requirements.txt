@@ -11,7 +11,7 @@ defusedxml==0.7.1
 httpx==0.28.1
 
 # Optional SQL loaders
-trino==0.338.0
+trino==0.339.0
 psycopg2-binary==2.9.12
 
 # Optional: international address parsing (better accuracy, requires C library)
