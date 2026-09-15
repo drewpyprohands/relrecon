@@ -12,7 +12,7 @@ httpx==0.28.1
 
 # Optional SQL loaders
 trino==0.338.0
-psycopg2-binary==2.9.12
+psycopg2-binary==2.9.13
 
 # Optional: international address parsing (better accuracy, requires C library)
 # Install libpostal first: see docs/implementation-plan.md#libpostal-installation
